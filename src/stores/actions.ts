@@ -5,10 +5,11 @@
    ═══════════════════════════════════════════════════════════ */
 
 import { gameStore } from './game';
-import type { GameState, Slot, ScheduleEntry, GamePromise, Issue, LeaderPressureModifier } from '../core/types';
+import type { GameState, Slot, ScheduleEntry, GamePromise, Issue, LeaderPressureModifier, MeetingRequest } from '../core/types';
 import { advanceSlot as calAdvanceSlot } from '../core/calendar';
 import { shiftSentiment } from '../core/sentiment';
 import { clamp, generateId } from '../core/utils';
+import { isLeadershipNpc, getAdvanceBookingDays } from '../core/turn-processor';
 
 function update(fn: (state: GameState) => GameState) {
   gameStore.update(s => s ? fn(s) : s);
@@ -279,4 +280,179 @@ export function offerBudgetHelp(npcId: string, billId: string) {
       fulfilled: null,
     }],
   }));
+}
+
+// ── Meeting Request Responses ──
+
+/**
+ * Accept an NPC meeting request: +3 sentiment, schedule for a future slot.
+ */
+export function acceptMeetingRequest(requestId: string, day: number, slot: Slot) {
+  update(s => {
+    const req = s.meetingRequests.find(r => r.id === requestId);
+    if (!req || req.status !== 'pending') return s;
+
+    // +3 sentiment for accepting
+    const newSentiment = shiftSentiment(s, req.npcId, 3);
+
+    // Add schedule entry for the meeting
+    const entry: ScheduleEntry = {
+      day,
+      slot,
+      type: 'meeting',
+      label: `MEETING: ${s.npcs.find(n => n.id === req.npcId)?.name.toUpperCase() ?? 'NPC'}`,
+      npcId: req.npcId,
+      mandatory: false,
+    };
+
+    return {
+      ...s,
+      sentiment: newSentiment,
+      meetingRequests: s.meetingRequests.map(r =>
+        r.id === requestId
+          ? { ...r, status: 'accepted' as const, scheduledDay: day, scheduledSlot: slot, sentimentApplied: true }
+          : r
+      ),
+      schedule: [...s.schedule, entry],
+    };
+  });
+}
+
+/**
+ * Decline an NPC meeting request: 0 sentiment, NPC won't ask for 10+ days.
+ */
+export function declineMeetingRequest(requestId: string) {
+  update(s => ({
+    ...s,
+    meetingRequests: s.meetingRequests.map(r =>
+      r.id === requestId
+        ? { ...r, status: 'declined' as const, sentimentApplied: true }
+        : r
+    ),
+  }));
+}
+
+/**
+ * Cancel a previously accepted meeting: -5 sentiment.
+ */
+export function cancelAcceptedMeeting(requestId: string) {
+  update(s => {
+    const req = s.meetingRequests.find(r => r.id === requestId);
+    if (!req || req.status !== 'accepted') return s;
+
+    // -5 sentiment for accepting then canceling
+    const newSentiment = shiftSentiment(s, req.npcId, -5);
+
+    // Remove the schedule entry
+    const schedule = s.schedule.filter(
+      e => !(e.day === req.scheduledDay && e.slot === req.scheduledSlot && e.npcId === req.npcId && e.type === 'meeting')
+    );
+
+    return {
+      ...s,
+      sentiment: newSentiment,
+      meetingRequests: s.meetingRequests.map(r =>
+        r.id === requestId ? { ...r, status: 'declined' as const } : r
+      ),
+      schedule,
+    };
+  });
+}
+
+/**
+ * Book a player-initiated meeting with an NPC for a future day/slot.
+ * Enforces advance booking: 1 day for regular, 2 for leadership.
+ */
+export function bookMeeting(npcId: string, day: number, slot: Slot): { success: boolean; error?: string } {
+  let result = { success: false, error: '' };
+
+  gameStore.update(s => {
+    if (!s) { result = { success: false, error: 'No game state' }; return s; }
+
+    const npc = s.npcs.find(n => n.id === npcId);
+    if (!npc) { result = { success: false, error: 'NPC not found' }; return s; }
+
+    // Check advance booking requirement
+    const advanceDays = getAdvanceBookingDays(npc, s);
+    if (day < s.currentDay + advanceDays) {
+      result = { success: false, error: `${npc.name.toUpperCase()} REQUIRES ${advanceDays}-DAY ADVANCE BOOKING` };
+      return s;
+    }
+
+    // Check NPC availability
+    const availability = s.npcAvailability.find(a => a.npcId === npcId);
+    if (availability) {
+      const isAvailable = availability.slots.some(sl => sl.day === day && sl.slot === slot);
+      if (!isAvailable) {
+        result = { success: false, error: `${npc.name.toUpperCase()} IS NOT AVAILABLE AT THAT TIME` };
+        return s;
+      }
+    }
+
+    // Check slot not already booked
+    const occupied = s.schedule.some(e => e.day === day && e.slot === slot);
+    if (occupied) {
+      result = { success: false, error: 'THAT SLOT IS ALREADY BOOKED' };
+      return s;
+    }
+
+    // Book it
+    const entry: ScheduleEntry = {
+      day,
+      slot,
+      type: 'meeting',
+      label: `MEETING: ${npc.name.toUpperCase()}`,
+      npcId,
+      mandatory: false,
+    };
+
+    result = { success: true };
+    return {
+      ...s,
+      schedule: [...s.schedule, entry],
+    };
+  });
+
+  return result;
+}
+
+/**
+ * Mark an NPC-initiated meeting request as completed (after the meeting happens).
+ */
+export function completeMeetingRequest(requestId: string) {
+  update(s => ({
+    ...s,
+    meetingRequests: s.meetingRequests.map(r =>
+      r.id === requestId ? { ...r, status: 'completed' as const } : r
+    ),
+  }));
+}
+
+/**
+ * Host a fundraiser for a colleague. Costs $1,200 from war chest,
+ * earns sentiment with the target NPC.
+ */
+export function hostColleagueFundraiser(npcId: string): { success: boolean; error?: string } {
+  let result = { success: false, error: '' };
+
+  gameStore.update(s => {
+    if (!s) { result = { success: false, error: 'No game state' }; return s; }
+
+    if (s.warChest < 1200) {
+      result = { success: false, error: 'INSUFFICIENT FUNDS (NEED $1,200)' };
+      return s;
+    }
+
+    const npc = s.npcs.find(n => n.id === npcId);
+    if (!npc) { result = { success: false, error: 'NPC not found' }; return s; }
+
+    result = { success: true };
+    return {
+      ...s,
+      warChest: s.warChest - 1200,
+      sentiment: shiftSentiment(s, npcId, 8),
+    };
+  });
+
+  return result;
 }

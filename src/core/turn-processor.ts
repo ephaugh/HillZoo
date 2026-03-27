@@ -7,10 +7,11 @@
 import type {
   GameState, NPC, Bill, Issue, Temperature, GossipEntry,
   Headline, ScheduleEntry, Slot, ReportCard, ReportCardGrade,
-  MandatoryEvent,
+  MandatoryEvent, NpcDeal, MeetingRequest, MeetingRequestReason,
+  MeetingRequestPriority, NpcAvailabilityWeek,
 } from './types';
 import { ALL_ISSUES, ISSUE_LABELS, COMMITTEE_ISSUES, CROSS_CUTTING_REFERRAL, type CommitteeIssue, type CrossCuttingIssue } from './types';
-import { createRng, pick, pickN, clamp, generateId, randomInt, getSentimentTier } from './utils';
+import { createRng, pick, pickN, clamp, generateId, randomInt, getSentimentTier, shuffle, weightedRandom } from './utils';
 import { decaySentiment } from './sentiment';
 import { getWeek, getDayOfWeek, getPhase, getCommitteeForSlot } from './calendar';
 
@@ -56,6 +57,11 @@ export function processNewDay(state: GameState): GameState {
     s = processWeeklyTick(s, rng);
   }
 
+  // ── Generate initial availability on day 1 ──
+  if (day === 1 && s.npcAvailability.length === 0) {
+    s = generateNpcAvailability(s, rng);
+  }
+
   // ── Headline check ──
   s = processHeadlines(s, rng);
 
@@ -96,6 +102,12 @@ function processWeeklyTick(state: GameState, rng: () => number): GameState {
 
   // Check for zero-campaign week
   s = checkCampaignNeglect(s, rng);
+
+  // NPC-to-NPC deal generation
+  s = generateNpcDeals(s, rng);
+
+  // Regenerate NPC availability for the new week
+  s = generateNpcAvailability(s, rng);
 
   return s;
 }
@@ -329,6 +341,84 @@ function checkCampaignNeglect(state: GameState, rng: () => number): GameState {
   }
 
   return state;
+}
+
+// ══════════════════════════════════════════════════════════════
+// NPC-TO-NPC DEAL GENERATION (weekly)
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Generate NPC-to-NPC deals. Frequency depends on session phase:
+ * Opening (1-3): 1-2, Ramp-Up (4-6): 2-3, Peak (7-9): 3-4, Crunch (10-12): 2-3
+ * Each deal locks one vote on a specific bill.
+ * Deals are hidden by default, discoverable through gossip.
+ */
+function generateNpcDeals(state: GameState, rng: () => number): GameState {
+  const phase = getPhase(state.currentDay);
+
+  // Deals per week based on phase
+  const dealCounts: Record<string, [number, number]> = {
+    opening: [1, 2],
+    ramp_up: [2, 3],
+    peak: [3, 4],
+    crunch: [2, 3],
+  };
+  const [min, max] = dealCounts[phase] ?? [1, 2];
+  const count = randomInt(rng, min, max);
+
+  const activeBills = state.npcBills.filter(b =>
+    b.stage !== 'dead' && b.stage !== 'law'
+  );
+  if (activeBills.length === 0) return state;
+
+  const newDeals: NpcDeal[] = [];
+
+  for (let i = 0; i < count; i++) {
+    // Pick a bill
+    const bill = pick(rng, activeBills);
+    const author = state.npcs.find(n => n.id === bill.author);
+    if (!author) continue;
+
+    // Pick a partner NPC — prefer same party, not already in a deal for this bill
+    const existingDealNpcs = new Set(
+      state.npcDeals
+        .filter(d => d.lockedVote?.billId === bill.id)
+        .flatMap(d => [d.npc1, d.npc2])
+    );
+    const candidates = state.npcs.filter(n =>
+      n.id !== author.id &&
+      !existingDealNpcs.has(n.id) &&
+      // Dealmakers are 2x more likely to be in deals
+      (n.temperament === 'dealmaker' ? true : rng() > 0.4)
+    );
+    if (candidates.length === 0) continue;
+
+    const partner = pick(rng, candidates);
+
+    // Determine vote direction — partner votes yes on author's bill
+    const deal: NpcDeal = {
+      id: generateId('deal'),
+      npc1: author.id,
+      npc2: partner.id,
+      description: `${author.name.toUpperCase()} AND ${partner.name.toUpperCase()} AGREED ON ${bill.name.toUpperCase()}`,
+      lockedVote: { billId: bill.id, vote: 'yes' },
+      day: state.currentDay,
+      discovered: false,
+    };
+
+    newDeals.push(deal);
+
+    // Also adjust NPC-to-NPC sentiment (+5 between deal partners)
+    // This is tracked in npcSentiment but we don't need to implement
+    // that full system right now — the deal lock is the important part
+  }
+
+  if (newDeals.length === 0) return state;
+
+  return {
+    ...state,
+    npcDeals: [...state.npcDeals, ...newDeals],
+  };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -705,34 +795,179 @@ function processPresidentialDrift(state: GameState): GameState {
 }
 
 // ══════════════════════════════════════════════════════════════
-// NPC MEETING REQUESTS (~2 per week)
+// NPC MEETING REQUESTS (2-3 per week)
 // ══════════════════════════════════════════════════════════════
 
+/** Check if an NPC holds a leadership role (whip, majority leader, speaker, committee chair) */
+export function isLeadershipNpc(npc: NPC, state: GameState): boolean {
+  const isPartyLeader = state.parties.some(
+    p => p.whipId === npc.id || p.majorityLeaderId === npc.id || p.speakerId === npc.id
+  );
+  const isChair = state.committees.some(c => c.chair === npc.id);
+  return isPartyLeader || isChair;
+}
+
+/** Get the advance booking days required for an NPC (1 regular, 2 leadership) */
+export function getAdvanceBookingDays(npc: NPC, state: GameState): number {
+  return isLeadershipNpc(npc, state) ? 2 : 1;
+}
+
 function processNpcMeetingRequests(state: GameState, rng: () => number): GameState {
-  // ~30% chance per day of an NPC requesting a meeting
-  if (rng() > 0.3) return state;
+  const day = state.currentDay;
 
-  // Weighted toward active legislators needing support
-  const candidates = state.npcs.filter(n => n.hasActiveBill);
-  if (candidates.length === 0) return state;
+  // Expire old requests
+  let requests = state.meetingRequests.map(r => {
+    if (r.status === 'pending' && day > r.expirationDay) {
+      return { ...r, status: 'expired' as const, sentimentApplied: true };
+    }
+    return r;
+  });
 
-  const npc = pick(rng, candidates);
+  // Apply sentiment for newly expired requests: -1 for ignored/expired
+  const newlyExpired = requests.filter(
+    r => r.status === 'expired' && !state.meetingRequests.find(orig => orig.id === r.id && orig.status === 'expired')
+  );
+  let sentiment = { ...state.sentiment };
+  for (const req of newlyExpired) {
+    sentiment[req.npcId] = clamp((sentiment[req.npcId] ?? 0) - 1, -100, 100);
+  }
 
-  // Add as a gossip-style notification (will show in Dawn Brief)
-  const newGossip: GossipEntry = {
-    id: generateId('req'),
-    day: state.currentDay,
-    text: `${npc.name.toUpperCase()} HAS REQUESTED A MEETING WITH YOU.`,
-    source: 'SCHEDULING OFFICE',
-    quality: 'standard',
-    relatedNpcIds: [npc.id],
-    relatedBillIds: npc.activeBill ? [npc.activeBill] : [],
+  // Target: ~2-3 requests per 5-day week = ~40-60% daily chance
+  // But cap active pending requests at 3
+  const activePending = requests.filter(r => r.status === 'pending').length;
+  if (activePending >= 3 || rng() > 0.5) {
+    return { ...state, meetingRequests: requests, sentiment };
+  }
+
+  // NPCs who have recently requested (within last 10 days) are excluded
+  const recentRequestorIds = new Set(
+    requests.filter(r => day - r.dayRequested < 10).map(r => r.npcId)
+  );
+
+  // Build candidate pool with priority weights
+  const candidates: { npc: NPC; weight: number; reason: MeetingRequestReason; priority: MeetingRequestPriority }[] = [];
+
+  for (const npc of state.npcs) {
+    if (recentRequestorIds.has(npc.id)) continue;
+
+    const sent = sentiment[npc.id] ?? 0;
+
+    // NPCs with active bills wanting cosponsor support — high priority
+    if (npc.hasActiveBill) {
+      candidates.push({
+        npc, weight: 3, reason: 'cosponsor_ask',
+        priority: sent < -20 ? 'urgent' : 'important',
+      });
+    }
+
+    // NPCs with strong negative sentiment — complaint
+    if (sent <= -30) {
+      candidates.push({ npc, weight: 2, reason: 'complaint', priority: 'urgent' });
+    }
+
+    // Dealmaker NPCs looking to trade
+    if (npc.temperament === 'dealmaker' && sent > -10) {
+      candidates.push({ npc, weight: 2, reason: 'deal_offer', priority: 'important' });
+    }
+
+    // Same-party NPCs who have intel
+    if (npc.party === state.player.party && sent > 0) {
+      candidates.push({ npc, weight: 1, reason: 'intel_share', priority: 'casual' });
+    }
+
+    // General favor requests from warm/allied NPCs
+    if (sent >= 30) {
+      candidates.push({ npc, weight: 1, reason: 'favor_request', priority: 'casual' });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return { ...state, meetingRequests: requests, sentiment };
+  }
+
+  // Weighted selection
+  const weights = candidates.map(c => c.weight);
+  const selected = weightedRandom(rng, candidates, weights);
+
+  // Generate bark text for the request
+  const barkText = generateRequestBark(selected.npc, selected.reason, rng);
+
+  const newRequest: MeetingRequest = {
+    id: generateId('mreq'),
+    npcId: selected.npc.id,
+    reason: selected.reason,
+    priority: selected.priority,
+    barkText,
+    dayRequested: day,
+    expirationDay: day + 3,
+    status: 'pending',
+    sentimentApplied: false,
   };
 
-  return {
-    ...state,
-    gossipLog: [newGossip, ...state.gossipLog].slice(0, 15),
-  };
+  requests = [...requests, newRequest];
+
+  return { ...state, meetingRequests: requests, sentiment };
+}
+
+function generateRequestBark(npc: NPC, reason: MeetingRequestReason, _rng: () => number): string {
+  const name = npc.name.toUpperCase();
+  switch (reason) {
+    case 'cosponsor_ask':
+      return `${name} WANTS TO DISCUSS THEIR BILL WITH YOU.`;
+    case 'vote_ask':
+      return `${name} IS SEEKING YOUR VOTE ON AN UPCOMING MEASURE.`;
+    case 'deal_offer':
+      return `${name} SAYS THEY HAVE A PROPOSITION FOR YOU.`;
+    case 'intel_share':
+      return `${name} WANTS TO SHARE SOME INFORMATION.`;
+    case 'complaint':
+      return `${name} HAS CONCERNS THEY WANT TO RAISE WITH YOU.`;
+    case 'favor_request':
+      return `${name} IS ASKING FOR A MOMENT OF YOUR TIME.`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// NPC WEEKLY AVAILABILITY
+// ══════════════════════════════════════════════════════════════
+
+function generateNpcAvailability(state: GameState, rng: () => number): GameState {
+  const week = getWeek(state.currentDay);
+  const weekStart = (week - 1) * 5 + 1;
+  const slots: Slot[] = ['morning', 'afternoon', 'evening'];
+
+  const availability: NpcAvailabilityWeek[] = state.npcs.map(npc => {
+    const isLeader = isLeadershipNpc(npc, state);
+    const slotCount = isLeader
+      ? 2 + Math.floor(rng() * 2)  // 2-3 for leadership
+      : 4 + Math.floor(rng() * 3); // 4-6 for regular
+
+    // Generate all possible slots for this week
+    const possibleSlots: { day: number; slot: Slot }[] = [];
+    for (let d = weekStart; d < weekStart + 5 && d <= 60; d++) {
+      for (const slot of slots) {
+        // Skip slots already booked as mandatory events
+        const isMandatory = state.schedule.some(
+          e => e.day === d && e.slot === slot && e.mandatory
+        );
+        if (!isMandatory) {
+          possibleSlots.push({ day: d, slot });
+        }
+      }
+    }
+
+    // Pick random subset of available slots
+    const shuffled = shuffle(rng, possibleSlots);
+    const selected = shuffled.slice(0, Math.min(slotCount, shuffled.length));
+
+    return {
+      npcId: npc.id,
+      weekNumber: week,
+      slots: selected,
+    };
+  });
+
+  return { ...state, npcAvailability: availability };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -858,9 +1093,9 @@ function checkPromises(state: GameState): GameState {
   for (const p of updatedPromises) {
     const original = state.promises.find(op => op.id === p.id);
     if (original && original.fulfilled === null && p.fulfilled === false) {
-      // Just broke this promise — apply -25 sentiment
+      // Just broke this promise — apply -30 sentiment (GDD spec: -25 to -35)
       const current = sentiment[p.npcId] ?? 0;
-      sentiment[p.npcId] = clamp(current - 25, -100, 100);
+      sentiment[p.npcId] = clamp(current - 30, -100, 100);
     }
   }
 

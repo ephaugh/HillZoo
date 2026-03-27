@@ -308,6 +308,8 @@ export function generateWorld(creation: CreationState): GameState {
     },
 
     npcDeals: [],
+    meetingRequests: [],
+    npcAvailability: [],
     leaderPressureModifiers: [],
     voteHistory: [],
     partyBalance: creation.partyBalance,

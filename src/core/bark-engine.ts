@@ -505,3 +505,122 @@ export function selectDiscussionBark(
   };
   return pick(rng, fallbacks[category] ?? ["Interesting question."]);
 }
+
+// ══════════════════════════════════════════════════════════════
+// ARM-TWIST BARK SELECTION
+// ══════════════════════════════════════════════════════════════
+
+let ARMTWIST_BARKS_DATA: Array<{
+  driver: string;
+  temperament: string;
+  text: string;
+}> = [];
+
+let armtwistLoaded = false;
+
+export async function loadArmtwistBarks(): Promise<void> {
+  if (armtwistLoaded) return;
+  try {
+    const mod = await import('../data/barks/armtwist');
+    ARMTWIST_BARKS_DATA = mod.ARMTWIST_BARKS;
+  } catch {}
+  armtwistLoaded = true;
+}
+
+/**
+ * Select an arm-twist bark for the floor vote arm-twisting mechanic.
+ * Uses dominant driver + temperament to pick from the armtwist corpus.
+ */
+export function selectArmtwistBark(
+  rng: () => number,
+  npc: NPC,
+  dominantDriver: DominantDriver,
+): string {
+  // Map DominantDriver to armtwist driver names
+  const driverMap: Record<DominantDriver, string> = {
+    interest: 'interest_alignment',
+    sentiment: 'sentiment',
+    party: 'party_pressure',
+    district: 'district_pressure',
+    faction: 'faction_pressure',
+    momentum: 'momentum',
+  };
+  const driver = driverMap[dominantDriver];
+
+  if (ARMTWIST_BARKS_DATA.length > 0) {
+    const candidates = ARMTWIST_BARKS_DATA.filter(b =>
+      b.driver === driver && b.temperament === npc.temperament
+    );
+    if (candidates.length > 0) return pick(rng, candidates).text;
+
+    // Fallback: any bark matching temperament
+    const tempFallback = ARMTWIST_BARKS_DATA.filter(b =>
+      b.temperament === npc.temperament
+    );
+    if (tempFallback.length > 0) return pick(rng, tempFallback).text;
+  }
+
+  // Inline fallbacks
+  const fallbacks: Record<Temperament, string[]> = {
+    ideologue: ["This has to be right. Not convenient — right.", "I didn't come here to compromise on the fundamentals."],
+    follower: ["Does this match what our party stands for?", "I need to know leadership is behind this."],
+    dealmaker: ["What's your best offer? Time's running out.", "Everything has a price. Name yours."],
+    opportunist: ["Which way is the wind blowing on this?", "The smart money — where is it?"],
+  };
+  return pick(rng, fallbacks[npc.temperament]);
+}
+
+// ══════════════════════════════════════════════════════════════
+// QUICK INTERACTION BARK SELECTION
+// ══════════════════════════════════════════════════════════════
+
+let QUICK_BARKS_DATA: Array<{
+  type: string;
+  category: string;
+  temperament: string;
+  text: string;
+}> = [];
+
+let quickLoaded = false;
+
+export async function loadQuickBarks(): Promise<void> {
+  if (quickLoaded) return;
+  try {
+    const mod = await import('../data/barks/quick');
+    QUICK_BARKS_DATA = mod.QUICK_BARKS;
+  } catch {}
+  quickLoaded = true;
+}
+
+/**
+ * Select a bark for a quick interaction.
+ * @param type - interaction type (ambush, early_bird, hallway, lingerer)
+ * @param category - bark category (vote_ask, cosponsor_ask, opening, etc.)
+ */
+export function selectQuickBark(
+  rng: () => number,
+  npc: NPC,
+  type: string,
+  category: string,
+): string | null {
+  if (QUICK_BARKS_DATA.length === 0) return null;
+
+  // Try exact match: type + category + temperament
+  const exact = QUICK_BARKS_DATA.filter(b =>
+    b.type === type && b.category === category &&
+    (b.temperament === npc.temperament || b.temperament === 'any')
+  );
+  if (exact.length > 0) return pick(rng, exact).text;
+
+  // Fallback: type + category (any temperament)
+  const typeCat = QUICK_BARKS_DATA.filter(b =>
+    b.type === type && b.category === category
+  );
+  if (typeCat.length > 0) return pick(rng, typeCat).text;
+
+  // Fallback: just type
+  const typeOnly = QUICK_BARKS_DATA.filter(b => b.type === type);
+  if (typeOnly.length > 0) return pick(rng, typeOnly).text;
+
+  return null;
+}

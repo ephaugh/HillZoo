@@ -18,8 +18,8 @@ export function shiftSentiment(
   rawShift: number,
 ): Record<string, number> {
   const current = state.sentiment[npcId] ?? 0;
-  // Asymmetry: negative shifts amplified
-  const effectiveShift = rawShift < 0 ? rawShift * 1.5 : rawShift;
+  // Asymmetry: negative shifts roughly 2x as impactful (per GDD System 4)
+  const effectiveShift = rawShift < 0 ? rawShift * 2.0 : rawShift;
   const newValue = clamp(current + effectiveShift, -100, 100);
   return { ...state.sentiment, [npcId]: Math.round(newValue) };
 }

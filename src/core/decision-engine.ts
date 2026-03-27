@@ -219,10 +219,10 @@ export function calculateNetWillingness(
     }
   }
 
-  // Broken promises
+  // Broken promises (-25 to -35 per GDD; use -30 as midpoint)
   for (const promise of state.promises) {
     if (promise.npcId === npc.id && promise.fulfilled === false) {
-      situational -= 20;
+      situational -= 30;
     }
   }
 
@@ -260,13 +260,16 @@ export function calculateNetWillingness(
   }
 
   // ── Lame Duck modifiers (when PLAYER is lame duck) ──
+  // GDD hierarchy: Opportunists easier (cheap vote), Ideologues more respectful
+  // (admire freedom), Followers distant (institutional not personal),
+  // Dealmakers much harder (nothing to trade)
   let lameDuckAdj = 0;
   if (state.isLameDuck) {
     switch (npc.temperament) {
+      case 'ideologue': lameDuckAdj = 5; break;
+      case 'follower': lameDuckAdj = -15; break;
       case 'dealmaker': lameDuckAdj = -20; break;
       case 'opportunist': lameDuckAdj = 15; break;
-      // ideologue/follower modify sentiment multiplier, handled above conceptually
-      // but for simplicity we apply flat adjustments here
     }
   }
 
@@ -388,4 +391,119 @@ export function evaluateTrade(
 
   // Sort by value descending, mark which ones meet the ask cost
   return options.sort((a, b) => b.value - a.value);
+}
+
+// ══════════════════════════════════════════════════════════════
+// PROMISE OVERRIDE (System 5)
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Check if an NPC has a promise to vote a certain way on a bill,
+ * and whether that promise holds or breaks under pressure.
+ *
+ * GDD: "Promise overrides the calculation unless Net Willingness
+ * is below -40. Breaking triggers betrayal penalties (-25 to -35)."
+ */
+export function checkPromiseOverride(
+  npc: NPC,
+  bill: Bill,
+  state: GameState,
+): { hasPromise: boolean; promiseHolds: boolean; promisedVote: 'yes' | 'no' | null } {
+  // Find any active promise from this NPC related to voting on this bill
+  const promise = state.promises.find(p =>
+    p.npcId === npc.id &&
+    p.fulfilled === null &&
+    p.type === 'vote' &&
+    p.billId === bill.id
+  );
+  if (!promise) return { hasPromise: false, promiseHolds: false, promisedVote: null };
+
+  // Calculate current NW
+  const breakdown = calculateNetWillingness(npc, bill, state);
+
+  // Promise holds if NW >= -40, breaks if NW < -40
+  const holds = breakdown.total >= -40;
+
+  return {
+    hasPromise: true,
+    promiseHolds: holds,
+    promisedVote: 'yes', // promises are always to vote yes on player's bill
+  };
+}
+
+// ══════════════════════════════════════════════════════════════
+// NPC VOTE RESOLUTION (for floor votes)
+// ══════════════════════════════════════════════════════════════
+
+export type NpcVoteResult = {
+  npcId: string;
+  vote: 'yes' | 'no' | 'abstain';
+  reason: 'promise_held' | 'promise_broke' | 'nw_positive' | 'nw_negative' | 'deal_locked';
+  nw: number;
+};
+
+/**
+ * Resolve how an NPC votes on a bill. Checks:
+ * 1. NPC-to-NPC deal locks (vote already committed)
+ * 2. Promise override (player extracted a promise)
+ * 3. Net Willingness calculation
+ *
+ * Returns the vote and the reason.
+ */
+export function resolveNpcVote(
+  npc: NPC,
+  bill: Bill,
+  state: GameState,
+  rng: () => number,
+): NpcVoteResult {
+  // 1. Check NPC-to-NPC deal locks
+  for (const deal of state.npcDeals) {
+    if (deal.lockedVote && deal.lockedVote.billId === bill.id) {
+      if (deal.npc1 === npc.id || deal.npc2 === npc.id) {
+        return {
+          npcId: npc.id,
+          vote: deal.lockedVote.vote,
+          reason: 'deal_locked',
+          nw: 0,
+        };
+      }
+    }
+  }
+
+  // 2. Check promise override
+  const promiseCheck = checkPromiseOverride(npc, bill, state);
+  if (promiseCheck.hasPromise) {
+    if (promiseCheck.promiseHolds) {
+      return {
+        npcId: npc.id,
+        vote: promiseCheck.promisedVote!,
+        reason: 'promise_held',
+        nw: 0,
+      };
+    } else {
+      // Promise breaks — vote based on NW, betrayal penalty applied separately
+      return {
+        npcId: npc.id,
+        vote: 'no',
+        reason: 'promise_broke',
+        nw: -45, // below -40 by definition
+      };
+    }
+  }
+
+  // 3. Standard NW calculation
+  const breakdown = calculateNetWillingness(npc, bill, state);
+  const nw = breakdown.total;
+
+  // NW >= 0 → yes, NW < 0 → no
+  // Small random variance for NPCs near the threshold (-5 to +5)
+  const variance = Math.floor(rng() * 11) - 5;
+  const effectiveNw = nw + variance;
+
+  return {
+    npcId: npc.id,
+    vote: effectiveNw >= 0 ? 'yes' : 'no',
+    reason: effectiveNw >= 0 ? 'nw_positive' : 'nw_negative',
+    nw,
+  };
 }

@@ -2,8 +2,10 @@
   import { gameStore } from '../../stores/game';
   import { getWeek, getDayOfWeek, getPhaseLabel, daysUntilPrimary } from '../../core/calendar';
   import { SLOT_LABELS } from '../../core/calendar';
-  import type { GameState, ScheduleEntry } from '../../core/types';
+  import type { GameState, ScheduleEntry, MeetingRequest, Slot } from '../../core/types';
   import { getPlayerCommitteeNames } from '../../core/roles';
+  import { acceptMeetingRequest, declineMeetingRequest } from '../../stores/actions';
+  import { getAdvanceBookingDays } from '../../core/turn-processor';
 
   let { gameState, onProceed }: { gameState: GameState; onProceed: () => void } = $props();
 
@@ -24,6 +26,50 @@
   );
 
   let playerCommittees = $derived(getPlayerCommitteeNames(gameState));
+
+  // Pending NPC meeting requests
+  let pendingRequests = $derived(
+    gameState.meetingRequests.filter(r => r.status === 'pending')
+  );
+
+  // Find the earliest available slot for accepting a request
+  function findEarliestSlot(npcId: string): { day: number; slot: Slot } | null {
+    const npc = gameState.npcs.find(n => n.id === npcId);
+    if (!npc) return null;
+    const advanceDays = getAdvanceBookingDays(npc, gameState);
+    const earliestDay = gameState.currentDay + advanceDays;
+    const slots: Slot[] = ['morning', 'afternoon', 'evening'];
+
+    // Check NPC availability
+    const availability = gameState.npcAvailability.find(a => a.npcId === npcId);
+
+    for (let d = earliestDay; d <= Math.min(earliestDay + 5, 60); d++) {
+      for (const slot of slots) {
+        const occupied = gameState.schedule.some(e => e.day === d && e.slot === slot);
+        if (occupied) continue;
+
+        // Check if NPC is available at this slot
+        if (availability) {
+          const avail = availability.slots.some(s => s.day === d && s.slot === slot);
+          if (!avail) continue;
+        }
+
+        return { day: d, slot };
+      }
+    }
+    return null;
+  }
+
+  function handleAccept(req: MeetingRequest) {
+    const slot = findEarliestSlot(req.npcId);
+    if (slot) {
+      acceptMeetingRequest(req.id, slot.day, slot.slot);
+    }
+  }
+
+  function handleDecline(req: MeetingRequest) {
+    declineMeetingRequest(req.id);
+  }
 </script>
 
 <div class="dawn-brief">
@@ -108,6 +154,37 @@
           {/if}
         </div>
       </div>
+
+      <!-- Section D: Meeting Requests -->
+      {#if pendingRequests.length > 0}
+        <div class="section">
+          <div class="section-title">MEETING REQUESTS</div>
+          <div class="request-list">
+            {#each pendingRequests as req}
+              {@const npc = gameState.npcs.find(n => n.id === req.npcId)}
+              {@const slot = findEarliestSlot(req.npcId)}
+              <div class="request-item" class:request-urgent={req.priority === 'urgent'}>
+                <div class="request-bark">{req.barkText}</div>
+                <div class="request-meta">
+                  <span class="request-priority priority-{req.priority}">{req.priority.toUpperCase()}</span>
+                  {#if slot}
+                    <span class="request-slot">EARLIEST: DAY {slot.day} {SLOT_LABELS[slot.slot]}</span>
+                  {:else}
+                    <span class="request-slot no-slot">NO AVAILABLE SLOT</span>
+                  {/if}
+                  <span class="request-expires">EXPIRES DAY {req.expirationDay}</span>
+                </div>
+                <div class="request-actions">
+                  {#if slot}
+                    <button class="btn" onclick={() => handleAccept(req)}>ACCEPT</button>
+                  {/if}
+                  <button class="btn" onclick={() => handleDecline(req)}>DECLINE</button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
 
     </div>
     <div class="brief-footer">
@@ -242,6 +319,46 @@
   .notice-warn {
     border-left-color: var(--warm-amber);
     color: var(--warm-amber);
+  }
+  /* Meeting Requests */
+  .request-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .request-item {
+    padding: 6px 10px;
+    background: var(--marble-white);
+    border: 2px solid var(--black);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .request-urgent {
+    border-color: var(--primary-red);
+  }
+  .request-bark {
+    font-size: 1.05rem;
+    color: var(--black);
+  }
+  .request-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 0.95rem;
+  }
+  .request-priority {
+    font-weight: bold;
+  }
+  .priority-urgent { color: var(--primary-red); }
+  .priority-important { color: var(--warm-amber); }
+  .priority-casual { color: var(--phosphor-dim); }
+  .request-slot { color: #555; }
+  .no-slot { color: var(--primary-red); }
+  .request-expires { color: #888; }
+  .request-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
   }
   .brief-footer {
     padding: 8px 12px;
