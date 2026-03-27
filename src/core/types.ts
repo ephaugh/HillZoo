@@ -298,6 +298,40 @@ export interface LeaderPressureModifier {
   day: number;
 }
 
+// ── Meeting Request (NPC-initiated) ──
+export type MeetingRequestStatus = 'pending' | 'accepted' | 'declined' | 'ignored' | 'expired' | 'completed';
+
+export type MeetingRequestPriority = 'urgent' | 'important' | 'casual';
+
+export type MeetingRequestReason =
+  | 'cosponsor_ask'    // NPC wants player to cosponsor their bill
+  | 'vote_ask'         // NPC wants a vote commitment
+  | 'deal_offer'       // NPC offering a trade
+  | 'intel_share'      // NPC wants to share gossip/info
+  | 'complaint'        // NPC unhappy about something
+  | 'favor_request';   // NPC wants a favor (fundraiser, campaign help, etc.)
+
+export interface MeetingRequest {
+  id: string;
+  npcId: string;
+  reason: MeetingRequestReason;
+  priority: MeetingRequestPriority;
+  barkText: string;           // short line shown in Dawn Brief
+  dayRequested: number;       // day the request was made
+  expirationDay: number;      // request expires after this day (dayRequested + 3)
+  status: MeetingRequestStatus;
+  scheduledDay?: number;      // day meeting is booked for (if accepted)
+  scheduledSlot?: Slot;
+  sentimentApplied: boolean;  // whether accept/decline/ignore sentiment was already applied
+}
+
+// ── NPC Availability ──
+export interface NpcAvailabilityWeek {
+  npcId: string;
+  weekNumber: number;         // 1-based week (days 1-5 = week 1, etc.)
+  slots: { day: number; slot: Slot }[];  // available slots this week (4-6 for regular, 2-3 for leadership)
+}
+
 // ── NPC-to-NPC Deal ──
 export interface NpcDeal {
   id: string;
@@ -364,6 +398,12 @@ export interface GameState {
 
   // NPC deals
   npcDeals: NpcDeal[];
+
+  // NPC-initiated meeting requests
+  meetingRequests: MeetingRequest[];
+
+  // NPC weekly availability (regenerated each week)
+  npcAvailability: NpcAvailabilityWeek[];
 
   // Scoring
   voteHistory: VoteRecord[];

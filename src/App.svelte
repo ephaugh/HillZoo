@@ -80,6 +80,7 @@
 
   let currentScreen: GameScreen = $state('dawn_brief');
   let meetingNpc: NPC | null = $state(null);
+  let activeMeetingRequest: import('./core/types').MeetingRequest | null = $state(null);
   let activeRefTab: string | null = $state(null);
   let defeatReason: string = $state('session_expired');
   let quickNpc: NPC | null = $state(null);
@@ -148,6 +149,15 @@
         routeToEvent(mandatoryEntry);
         return;
       }
+
+      // 9b. Check for scheduled (non-mandatory) meetings on this slot
+      const meetingEntry = game.schedule.find(
+        e => e.day === game!.currentDay && e.slot === game!.currentSlot && e.type === 'meeting' && e.npcId
+      );
+      if (meetingEntry && meetingEntry.npcId) {
+        startMeeting(meetingEntry.npcId);
+        return;
+      }
     }
 
     // 10. Route to next screen
@@ -198,11 +208,17 @@
   function startMeeting(npcId: string) {
     if (!game) return;
     meetingNpc = game.npcs.find(n => n.id === npcId) ?? null;
+    // Check if this is an NPC-initiated meeting
+    activeMeetingRequest = game.meetingRequests.find(
+      r => r.npcId === npcId && r.status === 'accepted'
+        && r.scheduledDay === game!.currentDay && r.scheduledSlot === game!.currentSlot
+    ) ?? null;
     if (meetingNpc) currentScreen = 'meeting';
   }
 
   function exitMeeting() {
     meetingNpc = null;
+    activeMeetingRequest = null;
     justHeldMeeting = true;
     finishSlot();
   }
@@ -439,7 +455,7 @@
             onEndSlot={endSlot}
           />
         {:else if currentScreen === 'meeting' && meetingNpc}
-          <MeetingScreen gameState={game} npc={meetingNpc} onExit={exitMeeting} />
+          <MeetingScreen gameState={game} npc={meetingNpc} onExit={exitMeeting} meetingRequest={activeMeetingRequest} />
         {:else if currentScreen === 'dusk_summary' && DuskSummary}
           <svelte:component this={DuskSummary} gameState={game} onProceed={proceedFromDusk} />
         {:else if currentScreen === 'committee_hearing' && CommitteeHearing}

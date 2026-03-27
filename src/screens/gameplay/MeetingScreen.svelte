@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { GameState, NPC, Issue } from '../../core/types';
+  import type { GameState, NPC, Issue, MeetingRequest } from '../../core/types';
   import { ISSUE_LABELS } from '../../core/types';
   import { getSentimentTier } from '../../core/utils';
   import { getNpcRole, getNpcRoleLabel, getNpcCommitteesShort } from '../../core/roles';
@@ -10,10 +10,19 @@
   import {
     changeSentiment, recordMeeting, addCosponsor, addPromise,
     applyLeaderPressure, scheduleHearing, scheduleFloorVote, offerBudgetHelp,
+    completeMeetingRequest, hostColleagueFundraiser,
   } from '../../stores/actions';
   import { generateId } from '../../core/utils';
 
-  let { gameState, npc, onExit }: { gameState: GameState; npc: NPC; onExit: () => void } = $props();
+  let { gameState, npc, onExit, meetingRequest = null }: {
+    gameState: GameState;
+    npc: NPC;
+    onExit: () => void;
+    meetingRequest?: MeetingRequest | null;
+  } = $props();
+
+  // Track whether NPC has made their ask (for NPC-initiated meetings)
+  let npcAskCompleted = $state(false);
 
   // Meeting phases: read → ask → offer
   type MeetingPhase = 'read' | 'ask' | 'offer';
@@ -40,11 +49,141 @@
   // RNG for this meeting
   let meetingRng = createRng(gameState.seed + gameState.currentDay * 100 + npc.id.charCodeAt(npc.id.length - 1));
 
-  // Record this meeting
+  // Record this meeting and mark request as completed if NPC-initiated
   $effect(() => {
     recordMeeting(npc.id);
     loadBarks();
+    if (meetingRequest) {
+      completeMeetingRequest(meetingRequest.id);
+    }
   });
+
+  // NPC-initiated meeting: start with NPC's ask
+  let npcAskBark: string | null = $state(null);
+  let npcAskOptions: { id: string; label: string; tag: string }[] = $state([]);
+
+  $effect(() => {
+    if (meetingRequest && !npcAskCompleted) {
+      const result = generateNpcAsk(meetingRequest);
+      npcAskBark = result.bark;
+      npcAskOptions = result.options;
+    }
+  });
+
+  function generateNpcAsk(req: MeetingRequest): { bark: string; options: { id: string; label: string; tag: string }[] } {
+    const name = npc.name.toUpperCase();
+    switch (req.reason) {
+      case 'cosponsor_ask':
+        return {
+          bark: `${name}: "I NEED YOUR NAME ON MY BILL. WILL YOU COSPONSOR?"`,
+          options: [
+            { id: 'accept_cosponsor', label: 'AGREE TO COSPONSOR', tag: '+SENTIMENT' },
+            { id: 'consider', label: 'I WILL CONSIDER IT', tag: 'NEUTRAL' },
+            { id: 'refuse', label: 'DECLINE', tag: '-SENTIMENT' },
+          ],
+        };
+      case 'vote_ask':
+        return {
+          bark: `${name}: "I NEED TO KNOW WHERE YOU STAND ON THE UPCOMING VOTE."`,
+          options: [
+            { id: 'pledge_vote', label: 'PLEDGE YOUR VOTE', tag: 'PROMISE' },
+            { id: 'consider', label: 'I NEED MORE TIME', tag: 'NEUTRAL' },
+            { id: 'refuse', label: 'I CAN\'T COMMIT', tag: '-SENTIMENT' },
+          ],
+        };
+      case 'deal_offer':
+        return {
+          bark: `${name}: "I HAVE A PROPOSITION THAT COULD BENEFIT US BOTH."`,
+          options: [
+            { id: 'hear_deal', label: 'LET ME HEAR IT', tag: 'TRADE' },
+            { id: 'refuse', label: 'NOT INTERESTED', tag: '-SENTIMENT' },
+          ],
+        };
+      case 'intel_share':
+        return {
+          bark: `${name}: "I HAVE INFORMATION YOU MIGHT FIND USEFUL."`,
+          options: [
+            { id: 'accept_intel', label: 'GO ON', tag: 'INTEL' },
+            { id: 'refuse', label: 'I AM BUSY', tag: '-SENTIMENT' },
+          ],
+        };
+      case 'complaint':
+        return {
+          bark: `${name}: "WE NEED TO TALK. I'M NOT HAPPY WITH HOW THINGS ARE GOING."`,
+          options: [
+            { id: 'listen', label: 'I AM LISTENING', tag: 'DIPLOMACY' },
+            { id: 'dismiss', label: 'I HAVE PRIORITIES', tag: '-SENTIMENT' },
+          ],
+        };
+      case 'favor_request':
+        return {
+          bark: `${name}: "I COULD USE A FAVOR. WOULD YOU HEAR ME OUT?"`,
+          options: [
+            { id: 'hear_favor', label: 'WHAT DO YOU NEED?', tag: 'FAVOR' },
+            { id: 'refuse', label: 'I CANNOT HELP RIGHT NOW', tag: '-SENTIMENT' },
+          ],
+        };
+    }
+  }
+
+  function handleNpcAskResponse(optionId: string) {
+    npcAskCompleted = true;
+    npcAskBark = null;
+    npcAskOptions = [];
+
+    switch (optionId) {
+      case 'accept_cosponsor':
+        if (npc.activeBill) addCosponsor(npc.activeBill, 'player');
+        changeSentiment(npc.id, 12);
+        currentBark = { text: "EXCELLENT. WITH YOUR NAME ON IT, WE HAVE REAL MOMENTUM.", interjection: null, tier: 1, tierLabel: "GRATEFUL.", dominantDriver: 'sentiment' };
+        phase = 'ask';
+        break;
+      case 'pledge_vote':
+        addPromise({ id: generateId('prm'), day: gameState.currentDay, npcId: npc.id, description: `VOTE YES ON ${npc.name.toUpperCase()}'S BILL`, type: 'vote_yes', billId: npc.activeBill ?? undefined, fulfilled: null });
+        changeSentiment(npc.id, 10);
+        currentBark = { text: "YOUR WORD MEANS SOMETHING. I WILL REMEMBER THIS.", interjection: null, tier: 1, tierLabel: "GRATEFUL.", dominantDriver: 'sentiment' };
+        phase = 'ask';
+        break;
+      case 'hear_deal':
+        // Prepare trade options
+        if (npc.activeBill) {
+          const npcBill = gameState.npcBills.find(b => b.id === npc.activeBill);
+          if (npcBill) {
+            const breakdown = calculateNetWillingness(npc, gameState.playerBill, gameState, false);
+            tradeOptions = evaluateTrade(npc, breakdown, gameState);
+          }
+        }
+        currentBark = { text: "HERE IS WHAT I PROPOSE: YOU HELP ME, AND I HELP YOU.", interjection: null, tier: 4, tierLabel: "NEGOTIATING.", dominantDriver: 'sentiment' };
+        phase = 'ask';
+        break;
+      case 'accept_intel':
+        changeSentiment(npc.id, 3);
+        currentBark = { text: getDiscussionResponse(), interjection: null, tier: 3, tierLabel: "INTEL.", dominantDriver: 'sentiment' };
+        phase = 'ask';
+        break;
+      case 'listen':
+        changeSentiment(npc.id, 5);
+        currentBark = { text: "I APPRECIATE YOU HEARING ME OUT. PERHAPS WE CAN FIND COMMON GROUND.", interjection: null, tier: 3, tierLabel: "NOTED.", dominantDriver: 'sentiment' };
+        phase = 'ask';
+        break;
+      case 'hear_favor':
+        changeSentiment(npc.id, 3);
+        currentBark = { text: "I NEED SOMEONE TO VOUCH FOR ME WITH THE COMMITTEE. CAN YOU DO THAT?", interjection: null, tier: 3, tierLabel: "FAVOR.", dominantDriver: 'sentiment' };
+        phase = 'ask';
+        break;
+      case 'consider':
+        // Neutral response — no sentiment change
+        currentBark = { text: "FAIR ENOUGH. THE OFFER STANDS.", interjection: null, tier: 4, tierLabel: "NOTED.", dominantDriver: 'sentiment' };
+        phase = 'ask';
+        break;
+      case 'refuse':
+      case 'dismiss':
+        changeSentiment(npc.id, -5);
+        currentBark = { text: "I SEE. WELL. I WILL REMEMBER THIS.", interjection: null, tier: 5, tierLabel: "DISAPPOINTED.", dominantDriver: 'sentiment' };
+        phase = 'ask';
+        break;
+    }
+  }
 
   // ── NPC role detection ──
   let npcRole = $derived(getNpcRole(npc.id, gameState));
@@ -217,14 +356,28 @@
       });
       phase = 'ask';
     } else if (verbId === 'fundraise_offer') {
-      changeSentiment(npc.id, 18);
-      currentBark = {
-        text: "A FUNDRAISER? NOW WE'RE TALKING. YOU HAVE MY ATTENTION.",
-        interjection: null,
-        tier: 1,
-        tierLabel: "INTERESTED.",
-        dominantDriver: 'sentiment',
-      };
+      // Host a fundraiser for colleague — costs $1,200 from war chest
+      const result = hostColleagueFundraiser(npc.id);
+      if (result.success) {
+        // hostColleagueFundraiser already applies sentiment +8 and deducts $1,200
+        // Add additional sentiment for the meeting context
+        changeSentiment(npc.id, 10);
+        currentBark = {
+          text: "A FUNDRAISER? NOW WE'RE TALKING. YOU HAVE MY ATTENTION.",
+          interjection: null,
+          tier: 1,
+          tierLabel: "INTERESTED.",
+          dominantDriver: 'sentiment',
+        };
+      } else {
+        currentBark = {
+          text: result.error ?? "INSUFFICIENT FUNDS.",
+          interjection: null,
+          tier: 5,
+          tierLabel: "CANNOT AFFORD.",
+          dominantDriver: 'sentiment',
+        };
+      }
       phase = 'ask';
     } else if (verbId === 'lean_on') {
       // Show sub-menu to pick target
@@ -645,7 +798,18 @@
         {/if}
       </div>
       <div class="dialogue-body">
-        {#if phase === 'read' || (phase === 'ask' && !currentBark && subMenu === 'none')}
+        {#if meetingRequest && !npcAskCompleted && npcAskBark}
+          <!-- NPC-Initiated Ask -->
+          <div class="verb-menu">
+            <div class="npc-ask-bark">{npcAskBark}</div>
+            {#each npcAskOptions as opt}
+              <button class="verb-opt" onclick={() => handleNpcAskResponse(opt.id)}>
+                {opt.label}
+                <span class="verb-tag">{opt.tag}</span>
+              </button>
+            {/each}
+          </div>
+        {:else if phase === 'read' || (phase === 'ask' && !currentBark && subMenu === 'none')}
           <!-- Verb Menu -->
           <div class="verb-menu">
             <div class="verb-label">CHOOSE AN ACTION:</div>
@@ -901,6 +1065,12 @@
     font-size: 1.05rem;
     color: #555;
     margin-bottom: 4px;
+  }
+  .npc-ask-bark {
+    font-size: 1.15rem;
+    color: var(--phosphor-green);
+    margin-bottom: 6px;
+    line-height: 1.3;
   }
   .verb-opt {
     font-size: 1.3rem;

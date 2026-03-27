@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { GameState, NPC } from '../../core/types';
-  import { getSentimentTier } from '../../core/utils';
+  import { getSentimentTier, createRng } from '../../core/utils';
+  import { selectQuickBark, loadQuickBarks } from '../../core/bark-engine';
 
   let { gameState, npc, interactionType, onComplete }: {
     gameState: GameState;
@@ -9,12 +10,26 @@
     onComplete: () => void;
   } = $props();
 
+  // Seeded RNG for deterministic quick interactions
+  const qiRng = createRng(gameState.seed + gameState.currentDay * 300 + npc.id.charCodeAt(0));
+
+  // Load quick bark corpus
+  $effect(() => { loadQuickBarks(); });
+
   let phase: 'initial' | 'engaged' | 'resolved' = $state('initial');
   let chosenVerb: string | null = $state(null);
   let sentimentChange: number = $state(0);
 
   let sentimentScore = $derived(gameState.sentiment[npc.id] ?? 0);
   let sentimentTier = $derived(getSentimentTier(sentimentScore));
+
+  // Map interaction types for bark lookup
+  const BARK_TYPE_MAP: Record<string, string> = {
+    early_bird: 'ambush', // early_bird uses ambush bark pool with different framing
+    ambush: 'ambush',
+    hallway: 'vote_read',
+    lingerer: 'holding_up',
+  };
 
   let typeLabel = $derived.by(() => {
     switch (interactionType) {
@@ -25,8 +40,14 @@
     }
   });
 
-  // Opening bark based on interaction type
+  // Opening bark — try authored corpus first, fall back to hardcoded
   let openingBark = $derived.by(() => {
+    const barkType = BARK_TYPE_MAP[interactionType];
+    const category = interactionType === 'ambush' ? 'vote_ask' : 'opening';
+    const authored = selectQuickBark(qiRng, npc, barkType, category);
+    if (authored) return `"${authored.toUpperCase()}"`;
+
+    // Fallback
     switch (interactionType) {
       case 'early_bird':
         return `"AH, YOU'RE HERE EARLY TOO. I HAD A FEELING WE MIGHT CROSS PATHS."`;
@@ -64,7 +85,7 @@
 
   function handleEngage() {
     phase = 'engaged';
-    sentimentChange = Math.floor(3 + Math.random() * 3); // +3 to +5
+    sentimentChange = Math.floor(3 + qiRng() * 3); // +3 to +5
   }
 
   function handleDecline() {
@@ -82,9 +103,20 @@
     }
   }
 
-  // Response bark after engaging
+  // Response bark after engaging — try authored corpus, fall back to hardcoded
   let responseBark = $derived.by(() => {
     if (!chosenVerb) return '';
+    const barkType = BARK_TYPE_MAP[interactionType];
+    const categoryMap: Record<string, string> = {
+      'DISCUSS': 'intel_reaction',
+      'OFFER': 'cosponsor_ask',
+      'QUICK QUESTION': 'vote_read',
+    };
+    const category = categoryMap[chosenVerb] ?? 'intel_reaction';
+    const authored = selectQuickBark(qiRng, npc, barkType, category);
+    if (authored) return `"${authored.toUpperCase()}"`;
+
+    // Fallback
     switch (chosenVerb) {
       case 'DISCUSS':
         return `"INTERESTING PERSPECTIVE. I'LL KEEP THAT IN MIND."`;
