@@ -118,11 +118,7 @@
       if (quickEntry && quickEntry.npcId && QuickInteraction) {
         quickNpc = game.npcs.find(n => n.id === quickEntry.npcId) ?? null;
         if (quickNpc) {
-          const label = quickEntry.label.toLowerCase();
-          quickType = label.includes('ambush') ? 'ambush'
-            : label.includes('early') ? 'early_bird'
-            : label.includes('linger') ? 'lingerer'
-            : 'hallway';
+          quickType = quickEntry.quickInteractionType ?? 'hallway';
           showQuickInteraction = true;
         }
       }

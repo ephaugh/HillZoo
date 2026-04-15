@@ -1135,7 +1135,9 @@ function maybeGenerateQuickInteraction(state: GameState, rng: () => number): Gam
   if (candidates.length === 0) candidates = state.npcs;
   const npc = pick(rng, candidates);
 
-  // Store as a special schedule entry for the current slot
+  // Store as a special schedule entry for the current slot.
+  // interactionType is carried explicitly on the entry so downstream UI
+  // code doesn't have to string-match the label.
   return {
     ...state,
     schedule: [...state.schedule, {
@@ -1145,6 +1147,7 @@ function maybeGenerateQuickInteraction(state: GameState, rng: () => number): Gam
       label: `${type.toUpperCase().replace('_', ' ')}: ${npc.name.toUpperCase()}`,
       npcId: npc.id,
       mandatory: false,
+      quickInteractionType: type,
     }],
   };
 }

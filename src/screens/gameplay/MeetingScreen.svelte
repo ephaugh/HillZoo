@@ -79,9 +79,9 @@
         return {
           bark: `${name}: "I NEED YOUR NAME ON MY BILL. WILL YOU COSPONSOR?"`,
           options: [
-            { id: 'accept_cosponsor', label: 'AGREE TO COSPONSOR', tag: '+SENTIMENT' },
+            { id: 'accept_cosponsor', label: 'AGREE TO COSPONSOR', tag: 'GOODWILL' },
             { id: 'consider', label: 'I WILL CONSIDER IT', tag: 'NEUTRAL' },
-            { id: 'refuse', label: 'DECLINE', tag: '-SENTIMENT' },
+            { id: 'refuse', label: 'DECLINE', tag: 'RISK' },
           ],
         };
       case 'vote_ask':
@@ -90,7 +90,7 @@
           options: [
             { id: 'pledge_vote', label: 'PLEDGE YOUR VOTE', tag: 'PROMISE' },
             { id: 'consider', label: 'I NEED MORE TIME', tag: 'NEUTRAL' },
-            { id: 'refuse', label: 'I CAN\'T COMMIT', tag: '-SENTIMENT' },
+            { id: 'refuse', label: 'I CAN\'T COMMIT', tag: 'RISK' },
           ],
         };
       case 'deal_offer':
@@ -98,7 +98,7 @@
           bark: `${name}: "I HAVE A PROPOSITION THAT COULD BENEFIT US BOTH."`,
           options: [
             { id: 'hear_deal', label: 'LET ME HEAR IT', tag: 'TRADE' },
-            { id: 'refuse', label: 'NOT INTERESTED', tag: '-SENTIMENT' },
+            { id: 'refuse', label: 'NOT INTERESTED', tag: 'RISK' },
           ],
         };
       case 'intel_share':
@@ -106,7 +106,7 @@
           bark: `${name}: "I HAVE INFORMATION YOU MIGHT FIND USEFUL."`,
           options: [
             { id: 'accept_intel', label: 'GO ON', tag: 'INTEL' },
-            { id: 'refuse', label: 'I AM BUSY', tag: '-SENTIMENT' },
+            { id: 'refuse', label: 'I AM BUSY', tag: 'RISK' },
           ],
         };
       case 'complaint':
@@ -114,7 +114,7 @@
           bark: `${name}: "WE NEED TO TALK. I'M NOT HAPPY WITH HOW THINGS ARE GOING."`,
           options: [
             { id: 'listen', label: 'I AM LISTENING', tag: 'DIPLOMACY' },
-            { id: 'dismiss', label: 'I HAVE PRIORITIES', tag: '-SENTIMENT' },
+            { id: 'dismiss', label: 'I HAVE PRIORITIES', tag: 'RISK' },
           ],
         };
       case 'favor_request':
@@ -122,7 +122,7 @@
           bark: `${name}: "I COULD USE A FAVOR. WOULD YOU HEAR ME OUT?"`,
           options: [
             { id: 'hear_favor', label: 'WHAT DO YOU NEED?', tag: 'FAVOR' },
-            { id: 'refuse', label: 'I CANNOT HELP RIGHT NOW', tag: '-SENTIMENT' },
+            { id: 'refuse', label: 'I CANNOT HELP RIGHT NOW', tag: 'RISK' },
           ],
         };
     }

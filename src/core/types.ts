@@ -215,6 +215,8 @@ export interface ReportCard {
 }
 
 // ── Schedule ──
+export type QuickInteractionType = 'early_bird' | 'ambush' | 'hallway' | 'lingerer';
+
 export interface ScheduleEntry {
   day: number;
   slot: Slot;
@@ -225,6 +227,8 @@ export interface ScheduleEntry {
   npcId?: string;
   billId?: string;
   mandatory: boolean;
+  /** Only set when type === 'quick_interaction'. Replaces label parsing. */
+  quickInteractionType?: QuickInteractionType;
 }
 
 export interface MandatoryEvent {
