@@ -10,6 +10,7 @@
     { id: 'factions', label: 'FACTIONS' },
     { id: 'promises', label: 'PROMISES' },
     { id: 'gossip', label: 'GOSSIP' },
+    { id: 'intel', label: 'INTEL' },
     { id: 'calendar', label: 'CALENDAR' },
     { id: 'bills', label: 'BILLS' },
     { id: 'whip', label: 'WHIP' },

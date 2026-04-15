@@ -287,6 +287,48 @@ export interface KnownInformation {
   meetingCount: Record<string, number>; // npcId → times met
 }
 
+// ── Intel Log ──
+// Persistent player-facing record of information gathered during the session.
+// Max 100 entries; oldest entries purge by importance tier (LOW → MEDIUM → HIGH).
+// Player's own bill intel NEVER purges.
+export type IntelImportance = 'low' | 'medium' | 'high';
+
+export type IntelSource =
+  | 'meeting'           // gathered in a direct meeting
+  | 'gallery_hearing'   // observed from committee gallery
+  | 'floor_vote'        // observed during floor vote
+  | 'caucus'            // caucus meeting
+  | 'quick_interaction' // hallway/ambush/early-bird/lingerer
+  | 'gossip'            // passed through gossip log
+  | 'dawn_brief'        // shown in daily brief
+  | 'player_bill';      // concerning the player's own bill (never purged)
+
+export type IntelCategory =
+  | 'npc_stance'        // an NPC's position on a policy / bill
+  | 'npc_temperament'   // behavioral read (never labels temperament directly)
+  | 'npc_concern'       // what an NPC cares about right now
+  | 'npc_disposition'   // how an NPC feels about the player
+  | 'npc_voting_lean'   // how an NPC is likely to vote
+  | 'npc_primary_status'// stress from primary threat
+  | 'bill_support'      // cosponsor / whip read on a bill
+  | 'bill_status'       // committee / floor status
+  | 'deal'              // NPC-to-NPC deal observed
+  | 'committee_read';   // committee disposition on a bill
+
+export interface IntelEntry {
+  id: string;
+  day: number;
+  source: IntelSource;
+  category: IntelCategory;
+  importance: IntelImportance;
+  headline: string;            // short summary shown in Intel Log list view (<= 80 chars)
+  detail: string;              // full description for detail view
+  relatedNpcIds: string[];     // NPCs this intel concerns
+  relatedBillIds: string[];    // bills this intel concerns
+  relatedIssues: Issue[];      // policy areas this intel concerns
+  concernsPlayerBill: boolean; // if true, intel is pinned and never purges
+}
+
 // ── Leader Pressure Modifier ──
 export interface LeaderPressureModifier {
   id: string;
@@ -395,6 +437,7 @@ export interface GameState {
   // Information
   gossipLog: GossipEntry[];
   knownInfo: KnownInformation;
+  intelLog: IntelEntry[];
 
   // NPC deals
   npcDeals: NpcDeal[];

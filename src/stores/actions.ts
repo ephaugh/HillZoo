@@ -5,11 +5,12 @@
    ═══════════════════════════════════════════════════════════ */
 
 import { gameStore } from './game';
-import type { GameState, Slot, ScheduleEntry, GamePromise, Issue, LeaderPressureModifier, MeetingRequest } from '../core/types';
+import type { GameState, Slot, ScheduleEntry, GamePromise, Issue, LeaderPressureModifier, MeetingRequest, Bill, Committee, IntelEntry, IntelImportance } from '../core/types';
 import { advanceSlot as calAdvanceSlot } from '../core/calendar';
 import { shiftSentiment } from '../core/sentiment';
 import { clamp, generateId } from '../core/utils';
 import { isLeadershipNpc, getAdvanceBookingDays } from '../core/turn-processor';
+import { findCommitteeForBill } from '../core/committees';
 
 function update(fn: (state: GameState) => GameState) {
   gameStore.update(s => s ? fn(s) : s);
@@ -92,6 +93,89 @@ export function breakPromise(promiseId: string) {
     ...s,
     promises: s.promises.map(p => p.id === promiseId ? { ...p, fulfilled: false } : p),
   }));
+}
+
+// ── Intel Log ──
+
+const INTEL_LOG_MAX = 100;
+
+/**
+ * Purge the oldest lowest-importance entry when the log exceeds MAX.
+ * Purge order: oldest LOW → oldest MEDIUM → oldest HIGH (pinned never purge).
+ */
+function purgeOldestIntelIfNeeded(log: IntelEntry[]): IntelEntry[] {
+  if (log.length <= INTEL_LOG_MAX) return log;
+
+  const tierPriority: IntelImportance[] = ['low', 'medium', 'high'];
+  for (const tier of tierPriority) {
+    // Find the oldest (lowest day, earliest in array) entry of this tier
+    // that isn't pinned to the player's bill.
+    let victimIdx = -1;
+    let victimDay = Infinity;
+    for (let i = 0; i < log.length; i++) {
+      const e = log[i];
+      if (e.concernsPlayerBill) continue;
+      if (e.importance !== tier) continue;
+      if (e.day < victimDay) {
+        victimDay = e.day;
+        victimIdx = i;
+      }
+    }
+    if (victimIdx >= 0) {
+      return [...log.slice(0, victimIdx), ...log.slice(victimIdx + 1)];
+    }
+  }
+  // Nothing purgeable (everything pinned) — leave as-is even if over limit
+  return log;
+}
+
+/**
+ * Add an entry to the persistent Intel Log.
+ * Dedupe: if an identical (category + headline + relatedNpcIds[0]) entry
+ * was added today, don't duplicate.
+ */
+export function addIntelEntry(partial: Omit<IntelEntry, 'id' | 'day'>) {
+  update(s => {
+    // Dedupe by (category + headline + day)
+    const today = s.currentDay;
+    const duplicate = s.intelLog.some(e =>
+      e.day === today &&
+      e.category === partial.category &&
+      e.headline === partial.headline
+    );
+    if (duplicate) return s;
+
+    const entry: IntelEntry = {
+      id: generateId('intel'),
+      day: today,
+      ...partial,
+    };
+    let nextLog = [entry, ...s.intelLog];
+    nextLog = purgeOldestIntelIfNeeded(nextLog);
+    return { ...s, intelLog: nextLog };
+  });
+}
+
+// ── Known Information ──
+
+/**
+ * Reveal an NPC's interest to the player. Idempotent.
+ */
+export function revealNpcInterest(npcId: string, issue: Issue) {
+  update(s => {
+    const current = s.knownInfo.revealedNpcInterests[npcId] ?? [];
+    if (current.includes(issue)) return s;
+    return {
+      ...s,
+      knownInfo: {
+        ...s.knownInfo,
+        revealedNpcInterests: {
+          ...s.knownInfo.revealedNpcInterests,
+          [npcId]: [...current, issue],
+        },
+      },
+    };
+  });
 }
 
 // ── Meeting tracking ──
@@ -389,9 +473,19 @@ export function bookMeeting(npcId: string, day: number, slot: Slot): { success: 
       }
     }
 
-    // Check slot not already booked
-    const occupied = s.schedule.some(e => e.day === day && e.slot === slot);
-    if (occupied) {
+    // Check slot not already booked — but a non-member committee hearing
+    // does NOT consume the slot (player observes from the gallery), so a
+    // meeting may be booked on top of it.
+    const occupiedEntries = s.schedule.filter(e => e.day === day && e.slot === slot);
+    const blockingEntry = occupiedEntries.find(e => {
+      if (e.type !== 'committee_hearing' || !e.billId) return true; // any non-hearing entry blocks
+      const bill = [s.playerBill, ...s.npcBills].find(b => b.id === e.billId);
+      if (!bill) return true;
+      const committee = findCommitteeForBill(bill, s);
+      // Gallery hearings (player NOT on committee) do not block
+      return committee?.members.includes('player') ?? true;
+    });
+    if (blockingEntry) {
       result = { success: false, error: 'THAT SLOT IS ALREADY BOOKED' };
       return s;
     }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { GameState, NPC, Issue, MeetingRequest } from '../../core/types';
+  import type { GameState, NPC, Issue, IssueStance, MeetingRequest, IntelEntry } from '../../core/types';
   import { ISSUE_LABELS } from '../../core/types';
   import { getSentimentTier } from '../../core/utils';
   import { getNpcRole, getNpcRoleLabel, getNpcCommitteesShort } from '../../core/roles';
@@ -11,8 +11,10 @@
     changeSentiment, recordMeeting, addCosponsor, addPromise,
     applyLeaderPressure, scheduleHearing, scheduleFloorVote, offerBudgetHelp,
     completeMeetingRequest, hostColleagueFundraiser,
+    addIntelEntry, revealNpcInterest,
   } from '../../stores/actions';
   import { generateId } from '../../core/utils';
+  import type { Bill } from '../../core/types';
 
   let { gameState, npc, onExit, meetingRequest = null }: {
     gameState: GameState;
@@ -211,7 +213,28 @@
   );
 
   // Sub-menu state for multi-step verbs
-  let subMenu: 'none' | 'lean_target' | 'hearing_bill' | 'floor_bill' = $state('none');
+  type SubMenuName =
+    | 'none'
+    | 'lean_target'
+    | 'hearing_bill'
+    | 'floor_bill'
+    | 'discuss_topic'      // top-level: Policy / Bill / Member
+    | 'discuss_policy'     // pick a policy area
+    | 'discuss_bill'       // pick a bill
+    | 'discuss_member';    // pick another NPC (Intel path)
+  let subMenu: SubMenuName = $state('none');
+
+  // Readout state — displayed after a Policy/Bill/Member discussion
+  interface ReadoutLine { text: string; positive?: boolean; negative?: boolean; warning?: boolean }
+  interface DiscussReadout {
+    title: string;
+    subtitle?: string;
+    bark: string;          // NPC's voiced line
+    lines: ReadoutLine[];  // mechanical readout bullets
+    misleading: boolean;   // intel may be unreliable
+    empty: boolean;        // NPC gave nothing useful
+  }
+  let discussReadout: DiscussReadout | null = $state(null);
 
   // ── Verb menu (dynamic based on NPC role) ──
   interface Verb { id: string; label: string; tag: string; available: boolean }
@@ -219,10 +242,10 @@
     const v: Verb[] = [
       { id: 'ask_vote', label: 'ASK FOR VOTE', tag: 'YOUR BILL', available: true },
       { id: 'ask_cosponsor', label: 'ASK TO COSPONSOR', tag: 'YOUR BILL', available: true },
-      { id: 'discuss', label: 'DISCUSS', tag: 'INFORMATION', available: true },
+      { id: 'discuss_info', label: 'DISCUSS', tag: 'POLICY / BILL', available: true },
+      { id: 'ask_about_member', label: 'ASK ABOUT A MEMBER', tag: 'INTEL', available: true },
       { id: 'offer_cosponsor', label: 'OFFER COSPONSOR', tag: 'THEIR BILL', available: npc.hasActiveBill },
       { id: 'offer_vote', label: 'OFFER VOTE', tag: 'THEIR BILL', available: npc.hasActiveBill },
-      { id: 'quick_question', label: 'QUICK QUESTION', tag: 'INTEL', available: true },
       { id: 'campaign_offer', label: 'OFFER TO CAMPAIGN', tag: 'FAVOR', available: true },
       { id: 'fundraise_offer', label: 'HOST FUNDRAISER', tag: '$1,200', available: gameState.warChest >= 1200 },
     ];
@@ -282,14 +305,13 @@
       if (bark.tier === 4) {
         tradeOptions = evaluateTrade(npc, breakdown, gameState);
       }
-    } else if (verbId === 'discuss') {
-      currentBark = {
-        text: getDiscussionResponse(),
-        interjection: null,
-        tier: 4,
-        tierLabel: '',
-        dominantDriver: 'sentiment',
-      };
+    } else if (verbId === 'discuss_info') {
+      // Open the Policy / Bill sub-menu
+      subMenu = 'discuss_topic';
+      phase = 'ask';
+    } else if (verbId === 'ask_about_member') {
+      // Intel path — pick another NPC to ask about
+      subMenu = 'discuss_member';
       phase = 'ask';
     } else if (verbId === 'offer_cosponsor' || verbId === 'offer_vote') {
       // Player offering to help NPC — weighted by committee membership and bill stage
@@ -324,15 +346,6 @@
         interjection: null,
         tier: 2,
         tierLabel: "NOTED.",
-        dominantDriver: 'sentiment',
-      };
-      phase = 'ask';
-    } else if (verbId === 'quick_question') {
-      currentBark = {
-        text: getQuickQuestionResponse(),
-        interjection: null,
-        tier: 3,
-        tierLabel: '',
         dominantDriver: 'sentiment',
       };
       phase = 'ask';
@@ -663,6 +676,7 @@
     tradeOptions = [];
     selectedVerb = null;
     subMenu = 'none';
+    discussReadout = null;
   }
 
   // ── Intel ledger messages ──
@@ -705,15 +719,465 @@
     return responses[Math.floor(meetingRng() * responses.length)];
   }
 
-  function getQuickQuestionResponse(): string {
-    const responses = [
-      "YOU WANT MY READ ON THINGS? THE SESSION IS MOVING FASTER THAN MOST REALIZE.",
-      "I'LL SHARE WHAT I CAN. BUT INFORMATION IS A CURRENCY HERE. REMEMBER THAT.",
-      "ASK AWAY. BUT I EXPECT THE SAME COURTESY WHEN I NEED ANSWERS.",
-      "BRIEFLY, THEN. WHAT DO YOU NEED TO KNOW?",
-    ];
-    return responses[Math.floor(meetingRng() * responses.length)];
+  // ═══════════════════════════════════════════════════════════
+  // DISCUSS — Information & Intel paths
+  // Tier-scaled readouts based on NPC's sentiment toward the player.
+  //   warm/allied: rich, reliable readout
+  //   neutral:    vague + 20% chance of misleading content
+  //   cold/hostile: nothing + 10% chance of misleading content
+  // ═══════════════════════════════════════════════════════════
+
+  function tierReliability(): { depth: 'rich' | 'vague' | 'nothing'; misleadChance: number } {
+    if (sentimentTier === 'warm' || sentimentTier === 'allied') {
+      return { depth: 'rich', misleadChance: 0 };
+    }
+    if (sentimentTier === 'neutral') {
+      return { depth: 'vague', misleadChance: 0.2 };
+    }
+    return { depth: 'nothing', misleadChance: 0.1 };
   }
+
+  function openPolicyDiscussion(issue: Issue) {
+    subMenu = 'none';
+    discussReadout = buildPolicyReadout(issue);
+    currentBark = {
+      text: discussReadout.bark,
+      interjection: null,
+      tier: 3,
+      tierLabel: 'POLICY READ.',
+      dominantDriver: 'sentiment',
+    };
+    phase = 'ask';
+
+    if (!discussReadout.empty && !discussReadout.misleading) {
+      // Log reliable intel to the persistent log
+      addIntelEntry({
+        source: 'meeting',
+        category: 'npc_stance',
+        importance: 'low',
+        headline: `${npc.name.toUpperCase()} ON ${ISSUE_LABELS[issue].toUpperCase()}`,
+        detail: discussReadout.lines.map(l => l.text).join(' · '),
+        relatedNpcIds: [npc.id],
+        relatedBillIds: [],
+        relatedIssues: [issue],
+        concernsPlayerBill: false,
+      });
+    }
+  }
+
+  function openBillDiscussion(bill: Bill) {
+    subMenu = 'none';
+    discussReadout = buildBillReadout(bill);
+    currentBark = {
+      text: discussReadout.bark,
+      interjection: null,
+      tier: 3,
+      tierLabel: 'BILL READ.',
+      dominantDriver: 'sentiment',
+    };
+    phase = 'ask';
+
+    if (!discussReadout.empty && !discussReadout.misleading) {
+      addIntelEntry({
+        source: 'meeting',
+        category: 'bill_support',
+        importance: bill.author === 'player' ? 'high' : 'medium',
+        headline: `${npc.name.toUpperCase()} ON #${bill.number} ${bill.name.toUpperCase()}`,
+        detail: discussReadout.lines.map(l => l.text).join(' · '),
+        relatedNpcIds: [npc.id],
+        relatedBillIds: [bill.id],
+        relatedIssues: [],
+        concernsPlayerBill: bill.author === 'player',
+      });
+    }
+  }
+
+  function openMemberDiscussion(target: NPC) {
+    subMenu = 'none';
+    discussReadout = buildMemberReadout(target);
+    currentBark = {
+      text: discussReadout.bark,
+      interjection: null,
+      tier: 3,
+      tierLabel: 'INTEL.',
+      dominantDriver: 'sentiment',
+    };
+    phase = 'ask';
+
+    if (!discussReadout.empty && !discussReadout.misleading) {
+      addIntelEntry({
+        source: 'meeting',
+        category: 'npc_disposition',
+        importance: 'medium',
+        headline: `INTEL ON ${target.name.toUpperCase()} FROM ${npc.name.toUpperCase()}`,
+        detail: discussReadout.lines.map(l => l.text).join(' · '),
+        relatedNpcIds: [target.id, npc.id],
+        relatedBillIds: target.activeBill ? [target.activeBill] : [],
+        relatedIssues: [],
+        concernsPlayerBill: false,
+      });
+    }
+  }
+
+  // ── Readout Builders ──
+
+  function buildPolicyReadout(issue: Issue): DiscussReadout {
+    const reliability = tierReliability();
+    const label = ISSUE_LABELS[issue].toUpperCase();
+    const stance = npc.issueStances[issue];
+
+    if (reliability.depth === 'nothing') {
+      const misleading = meetingRng() < reliability.misleadChance;
+      if (misleading) {
+        // Give a flipped signal
+        const fakeStance: IssueStance = stance === 'positive' ? 'negative' : stance === 'negative' ? 'positive' : (meetingRng() < 0.5 ? 'positive' : 'negative');
+        return {
+          title: label,
+          bark: `I DON'T REALLY CARE TO GET INTO ${label} WITH YOU.`,
+          lines: [
+            { text: `OFF-HAND REMARK: "${fakeStance === 'positive' ? 'I GUESS IT\'S FINE' : fakeStance === 'negative' ? 'WASTE OF TIME' : 'WHATEVER'}."`, warning: true },
+            { text: '(UNRELIABLE — SOURCE WAS DISMISSIVE.)', warning: true },
+          ],
+          misleading: true,
+          empty: false,
+        };
+      }
+      return {
+        title: label,
+        bark: `I'M NOT IN THE MOOD FOR A POLICY LECTURE RIGHT NOW.`,
+        lines: [{ text: 'NO USABLE INFORMATION GATHERED.' }],
+        misleading: false,
+        empty: true,
+      };
+    }
+
+    if (reliability.depth === 'vague') {
+      const misleading = meetingRng() < reliability.misleadChance;
+      const effectiveStance: IssueStance = misleading
+        ? (stance === 'positive' ? 'negative' : stance === 'negative' ? 'positive' : 'neutral')
+        : stance;
+      const hint = effectiveStance === 'positive'
+        ? 'I LEAN TOWARD THE PRO-SIDE.'
+        : effectiveStance === 'negative'
+          ? `I HAVE CONCERNS ABOUT ${label}.`
+          : `I'M STILL WORKING MY POSITION OUT.`;
+      return {
+        title: label,
+        bark: `ON ${label}? ${hint}`,
+        lines: [
+          { text: `GENERAL LEAN: ${effectiveStance.toUpperCase()}`,
+            positive: effectiveStance === 'positive', negative: effectiveStance === 'negative' },
+          ...(misleading ? [{ text: '(SOURCE SEEMED EVASIVE.)', warning: true } as ReadoutLine] : []),
+        ],
+        misleading,
+        empty: false,
+      };
+    }
+
+    // Rich path (warm / allied)
+    const isCore = npc.coreInterests.includes(issue);
+    const isFlex = npc.flexibleInterests.includes(issue);
+    const isStrong = npc.district.strongInterests.includes(issue);
+    const isDistrictHostile = npc.district.hostility === issue;
+
+    const lines: ReadoutLine[] = [
+      { text: `POSITION: ${stance.toUpperCase()}`,
+        positive: stance === 'positive', negative: stance === 'negative' },
+    ];
+    if (isCore) lines.push({ text: 'CORE INTEREST — WILL PRIORITIZE.', positive: true });
+    else if (isFlex) lines.push({ text: 'FLEXIBLE INTEREST — OPEN TO PERSUASION.' });
+    if (isStrong) lines.push({ text: 'DISTRICT FEELS STRONGLY ABOUT THIS.', positive: true });
+    if (isDistrictHostile) lines.push({ text: 'DISTRICT IS HOSTILE ON THIS.', warning: true });
+
+    // Temperature of the issue
+    const temp = gameState.issueTemperatures[issue];
+    if (temp === 'hot') lines.push({ text: 'ISSUE IS POLITICALLY HOT RIGHT NOW.', warning: true });
+
+    // Reveal as known info
+    revealNpcInterest(npc.id, issue);
+
+    const stanceLine = stance === 'positive' ? 'I\'M WITH YOU ON THIS.'
+      : stance === 'negative' ? 'I HAVE REAL PROBLEMS WITH THIS DIRECTION.'
+      : 'I\'M STILL WEIGHING IT — NEITHER YES NOR NO YET.';
+
+    return {
+      title: label,
+      bark: `ON ${label}? ${stanceLine}`,
+      lines,
+      misleading: false,
+      empty: false,
+    };
+  }
+
+  function buildBillReadout(bill: Bill): DiscussReadout {
+    const reliability = tierReliability();
+    const label = `#${bill.number} ${bill.name.toUpperCase()}`;
+
+    // Compute NPC's willingness toward this bill
+    const breakdown = calculateNetWillingness(npc, bill, gameState, false);
+
+    if (reliability.depth === 'nothing') {
+      const misleading = meetingRng() < reliability.misleadChance;
+      if (misleading) {
+        const flippedTier = breakdown.tier <= 3 ? 6 : 2;
+        return {
+          title: label,
+          bark: `I'M NOT GOING TO HASH THIS OUT WITH YOU.`,
+          lines: [
+            { text: `OFF-HAND READ: ${flippedTier <= 3 ? 'LIKELY YES' : 'LIKELY NO'}.`, warning: true },
+            { text: '(UNRELIABLE — SOURCE WAS TERSE.)', warning: true },
+          ],
+          misleading: true,
+          empty: false,
+        };
+      }
+      return {
+        title: label,
+        bark: `I DON'T HAVE ANYTHING TO SAY ABOUT THAT BILL.`,
+        lines: [{ text: 'NO USABLE INFORMATION GATHERED.' }],
+        misleading: false,
+        empty: true,
+      };
+    }
+
+    if (reliability.depth === 'vague') {
+      const misleading = meetingRng() < reliability.misleadChance;
+      const effectiveTier = misleading ? 7 - breakdown.tier : breakdown.tier;
+      const leanText = effectiveTier <= 3 ? 'LEANING YES' : effectiveTier === 4 ? 'OPEN TO A DEAL' : 'LEANING NO';
+      const positive = effectiveTier <= 3;
+      return {
+        title: label,
+        bark: `ON ${label}? I'D HAVE TO SEE WHERE THE DUST SETTLES.`,
+        lines: [
+          { text: `APPARENT LEAN: ${leanText}`, positive, negative: !positive && effectiveTier >= 5 },
+          ...(misleading ? [{ text: '(SOURCE HEDGED HEAVILY.)', warning: true } as ReadoutLine] : []),
+        ],
+        misleading,
+        empty: false,
+      };
+    }
+
+    // Rich path
+    const lines: ReadoutLine[] = [];
+    const leanText = breakdown.tier <= 2 ? 'STRONG YES'
+      : breakdown.tier === 3 ? 'LIKELY YES'
+      : breakdown.tier === 4 ? 'OPEN TO TRADE'
+      : breakdown.tier === 5 ? 'RELUCTANT'
+      : breakdown.tier === 6 ? 'LIKELY NO'
+      : 'HARD NO';
+    lines.push({
+      text: `VOTE LEAN: ${leanText}`,
+      positive: breakdown.tier <= 3,
+      negative: breakdown.tier >= 5,
+    });
+    lines.push({ text: `DOMINANT FACTOR: ${breakdown.dominantDriver.toUpperCase().replace('_', ' ')}.` });
+
+    // Committee read if NPC is on the committee
+    const billComm = findCommitteeForBill(bill, gameState);
+    if (billComm && npc.committeeMemberships.includes(billComm.id)) {
+      lines.push({ text: `SITS ON THE ${billComm.name.toUpperCase()} COMMITTEE.`, positive: true });
+    }
+
+    if (bill.cosponsors.includes(npc.id)) {
+      lines.push({ text: 'ALREADY A COSPONSOR.', positive: true });
+    }
+
+    // Bill stage context
+    if (bill.stage === 'floor') lines.push({ text: 'BILL IS ON THE FLOOR — LEAN IS LOCKING IN.', warning: true });
+    else if (bill.stage === 'hearing' || bill.stage === 'markup') lines.push({ text: `CURRENTLY IN ${bill.stage.toUpperCase()}.` });
+
+    const stanceLine = breakdown.tier <= 3
+      ? `YOUR BILL HAS MY SUPPORT.`
+      : breakdown.tier === 4
+        ? `I COULD BE PERSUADED — WITH THE RIGHT ARRANGEMENT.`
+        : breakdown.tier === 5
+          ? `I'VE GOT RESERVATIONS. DON'T COUNT ON ME.`
+          : `I WON'T BE VOTING FOR THAT.`;
+
+    return {
+      title: label,
+      bark: `${label}? ${stanceLine}`,
+      lines,
+      misleading: false,
+      empty: false,
+    };
+  }
+
+  function buildMemberReadout(target: NPC): DiscussReadout {
+    const reliability = tierReliability();
+    const targetName = target.name.toUpperCase();
+
+    if (reliability.depth === 'nothing') {
+      const misleading = meetingRng() < reliability.misleadChance;
+      if (misleading) {
+        return {
+          title: targetName,
+          bark: `I'M NOT INTERESTED IN GOSSIP.`,
+          lines: [
+            { text: `RUMOR: "${targetName} IS UNRELIABLE."`, warning: true },
+            { text: '(UNRELIABLE — SOURCE DISMISSIVE.)', warning: true },
+          ],
+          misleading: true,
+          empty: false,
+        };
+      }
+      return {
+        title: targetName,
+        bark: `I DON'T TALK ABOUT COLLEAGUES BEHIND THEIR BACKS.`,
+        lines: [{ text: 'NO USABLE INFORMATION GATHERED.' }],
+        misleading: false,
+        empty: true,
+      };
+    }
+
+    // Build up partial intel for vague / rich
+    const targetBreakdown = calculateNetWillingness(target, gameState.playerBill, gameState, false);
+    const targetSentiment = gameState.sentiment[target.id] ?? 0;
+    const targetTier = getSentimentTier(targetSentiment);
+
+    // Behavioral hint (NEVER the temperament label)
+    const temperamentHint = (() => {
+      switch (target.temperament) {
+        case 'ideologue':   return 'DRIVEN BY POLICY CONVICTION.';
+        case 'follower':    return 'CLOSELY TRACKS LEADERSHIP SIGNALS.';
+        case 'dealmaker':   return 'RESPONDS TO RECIPROCAL FAVORS.';
+        case 'opportunist': return 'TRACKS BILL MOMENTUM CLOSELY.';
+      }
+    })();
+
+    // Dominant concern
+    const dominantConcern = target.coreInterests[0];
+    const concernLabel = ISSUE_LABELS[dominantConcern].toUpperCase();
+
+    if (reliability.depth === 'vague') {
+      const misleading = meetingRng() < reliability.misleadChance;
+      const effectiveTier = misleading
+        ? (targetTier === 'warm' ? 'cold' : targetTier === 'cold' ? 'warm' : targetTier)
+        : targetTier;
+      return {
+        title: targetName,
+        bark: `${targetName}? I'VE HEARD A FEW THINGS.`,
+        lines: [
+          { text: `SEEMS ${effectiveTier.toUpperCase()} TOWARD YOU.`,
+            positive: effectiveTier === 'warm' || effectiveTier === 'allied',
+            negative: effectiveTier === 'cold' || effectiveTier === 'hostile' },
+          { text: `APPEARS FOCUSED ON ${concernLabel}.` },
+          ...(misleading ? [{ text: '(SOURCE WAS CAGEY.)', warning: true } as ReadoutLine] : []),
+        ],
+        misleading,
+        empty: false,
+      };
+    }
+
+    // Rich path
+    const lines: ReadoutLine[] = [];
+    lines.push({ text: `${targetTier.toUpperCase()} TOWARD YOU.`,
+      positive: targetTier === 'warm' || targetTier === 'allied',
+      negative: targetTier === 'cold' || targetTier === 'hostile' });
+    lines.push({ text: `BEHAVIORAL READ: ${temperamentHint}` });
+    lines.push({ text: `DOMINANT CONCERN: ${concernLabel}.` });
+
+    // Voting lean on player's bill
+    const leanText = targetBreakdown.tier <= 3 ? 'LIKELY YES ON YOUR BILL'
+      : targetBreakdown.tier === 4 ? 'OPEN TO A DEAL ON YOUR BILL'
+      : 'LEANING NO ON YOUR BILL';
+    lines.push({
+      text: leanText,
+      positive: targetBreakdown.tier <= 3,
+      negative: targetBreakdown.tier >= 5,
+    });
+
+    // Known deals involving the target
+    const knownDeals = gameState.npcDeals.filter(d =>
+      d.discovered && (d.npc1 === target.id || d.npc2 === target.id)
+    );
+    if (knownDeals.length > 0) {
+      lines.push({ text: `KNOWN DEAL: ${knownDeals[0].description.toUpperCase()}`, warning: true });
+    }
+
+    // Primary threat
+    if (target.primaryThreat >= 60) {
+      lines.push({ text: 'FACING SERIOUS PRIMARY THREAT — JUMPY.', warning: true });
+    }
+
+    const speakerStance = targetTier === 'warm' || targetTier === 'allied'
+      ? `${targetName} AND I GO BACK. HERE'S WHAT I KNOW.`
+      : `I'VE WATCHED ${targetName} FOR YEARS. HERE'S THE READ.`;
+
+    return {
+      title: targetName,
+      bark: speakerStance,
+      lines,
+      misleading: false,
+      empty: false,
+    };
+  }
+
+  // ── Eligibility for Member Intel ──
+  // A source can speak about a target if:
+  //   (1) they share a committee, OR
+  //   (2) they share a bill (co-authorship, cosponsor), OR
+  //   (3) the source is Warm+ toward the player (relationship gate)
+  function canDiscussMember(target: NPC): boolean {
+    if (target.id === npc.id) return false;
+    if (target.id === 'player') return false;
+
+    // Warm+ relationship allows broad intel
+    if (sentimentTier === 'warm' || sentimentTier === 'allied') return true;
+
+    // Shared committee
+    const sharesCommittee = npc.committeeMemberships.some(cid =>
+      target.committeeMemberships.includes(cid)
+    );
+    if (sharesCommittee) return true;
+
+    // Shared bill
+    const npcBill = npc.activeBill ? gameState.npcBills.find(b => b.id === npc.activeBill) : null;
+    const targetBill = target.activeBill ? gameState.npcBills.find(b => b.id === target.activeBill) : null;
+    if (npcBill && (npcBill.author === target.id || npcBill.cosponsors.includes(target.id))) return true;
+    if (targetBill && (targetBill.author === npc.id || targetBill.cosponsors.includes(npc.id))) return true;
+
+    return false;
+  }
+
+  // ── Topic pickers ──
+
+  // Issues this NPC cares about (core + flexible) — shown as priority picks
+  let priorityIssues = $derived([
+    ...npc.coreInterests,
+    ...npc.flexibleInterests,
+  ].filter((v, i, a) => a.indexOf(v) === i));
+
+  // All bills that could be discussed (player's + NPC bills still alive)
+  let discussableBills = $derived(
+    [gameState.playerBill, ...gameState.npcBills].filter(b => b.stage !== 'dead' && b.stage !== 'law')
+  );
+
+  // Members eligible to be asked about
+  let discussableMembers = $derived(
+    gameState.npcs.filter(canDiscussMember).sort((a, b) => a.name.localeCompare(b.name))
+  );
+
+  // ── Meeting Prep Sidebar ──
+  // Auto-surface intel entries relevant to THIS npc: entries that include
+  // this NPC in relatedNpcIds, or that concern their active bill, or
+  // that touch a policy area in this NPC's core/flexible interests.
+  let relevantIntel = $derived((): IntelEntry[] => {
+    const npcActiveBill = npc.activeBill;
+    const interestSet = new Set<Issue>([...npc.coreInterests, ...npc.flexibleInterests]);
+    return gameState.intelLog
+      .filter(e => {
+        if (e.relatedNpcIds.includes(npc.id)) return true;
+        if (npcActiveBill && e.relatedBillIds.includes(npcActiveBill)) return true;
+        if (e.relatedIssues.some(i => interestSet.has(i))) return true;
+        return false;
+      })
+      .sort((a, b) => {
+        if (a.concernsPlayerBill !== b.concernsPlayerBill) return a.concernsPlayerBill ? -1 : 1;
+        return b.day - a.day;
+      })
+      .slice(0, 6);
+  });
 </script>
 
 <div class="meeting-screen">
@@ -739,6 +1203,24 @@
         {npc.party === 'feralist' ? 'FERALIST' : 'COMMUNALIST'} &bull; SEN. {npc.seniority}
       </div>
     </div>
+
+    <!-- Meeting Prep Sidebar: Intel relevant to THIS NPC -->
+    {#if relevantIntel().length > 0}
+      <div class="prep-sidebar">
+        <div class="prep-header">PREP: RELEVANT INTEL</div>
+        <div class="prep-list">
+          {#each relevantIntel() as entry (entry.id)}
+            <div class="prep-entry" class:prep-pinned={entry.concernsPlayerBill}>
+              <div class="prep-entry-meta">
+                <span class="prep-day">D{entry.day}</span>
+                <span class="prep-imp prep-imp-{entry.importance}">{entry.importance.toUpperCase()}</span>
+              </div>
+              <div class="prep-headline">{entry.headline}</div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
   </div>
 
   <!-- Interaction Pane (right side) -->
@@ -863,6 +1345,81 @@
             {/each}
             <button class="verb-opt verb-exit" onclick={() => { subMenu = 'none'; resetToVerbs(); }}>CANCEL</button>
           </div>
+        {:else if subMenu === 'discuss_topic'}
+          <!-- Sub-menu: choose Policy or Bill to discuss -->
+          <div class="verb-menu">
+            <div class="verb-label">DISCUSS WHAT?</div>
+            <button class="verb-opt" onclick={() => subMenu = 'discuss_policy'}>
+              POLICY AREA
+              <span class="verb-tag">ISSUE</span>
+            </button>
+            <button class="verb-opt" onclick={() => subMenu = 'discuss_bill'}>
+              SPECIFIC BILL
+              <span class="verb-tag">BILL</span>
+            </button>
+            <button class="verb-opt verb-exit" onclick={() => { subMenu = 'none'; resetToVerbs(); }}>CANCEL</button>
+          </div>
+        {:else if subMenu === 'discuss_policy'}
+          <!-- Sub-menu: pick a policy area to discuss -->
+          <div class="verb-menu">
+            <div class="verb-label">WHICH POLICY AREA?</div>
+            <div class="sub-menu-list">
+              {#if priorityIssues.length > 0}
+                <div class="verb-subhead">THEIR INTERESTS</div>
+                {#each priorityIssues as issue}
+                  <button class="verb-opt" onclick={() => openPolicyDiscussion(issue)}>
+                    {ISSUE_LABELS[issue].toUpperCase()}
+                    <span class="verb-tag">{npc.coreInterests.includes(issue) ? 'CORE' : 'FLEXIBLE'}</span>
+                  </button>
+                {/each}
+              {/if}
+              <div class="verb-subhead">ALL ISSUES</div>
+              {#each Object.keys(ISSUE_LABELS) as issueKey}
+                {#if !priorityIssues.includes(issueKey as Issue)}
+                  <button class="verb-opt" onclick={() => openPolicyDiscussion(issueKey as Issue)}>
+                    {ISSUE_LABELS[issueKey as Issue].toUpperCase()}
+                    <span class="verb-tag">ISSUE</span>
+                  </button>
+                {/if}
+              {/each}
+            </div>
+            <button class="verb-opt verb-exit" onclick={() => { subMenu = 'discuss_topic'; }}>BACK</button>
+          </div>
+        {:else if subMenu === 'discuss_bill'}
+          <!-- Sub-menu: pick a bill to discuss -->
+          <div class="verb-menu">
+            <div class="verb-label">WHICH BILL?</div>
+            <div class="sub-menu-list">
+              {#each discussableBills as bill}
+                <button class="verb-opt" onclick={() => openBillDiscussion(bill)}>
+                  #{bill.number}: {bill.name.toUpperCase()}
+                  <span class="verb-tag">{bill.author === 'player' ? 'YOUR BILL' : bill.stage.toUpperCase()}</span>
+                </button>
+              {/each}
+            </div>
+            <button class="verb-opt verb-exit" onclick={() => { subMenu = 'discuss_topic'; }}>BACK</button>
+          </div>
+        {:else if subMenu === 'discuss_member'}
+          <!-- Sub-menu: pick a member to ask about -->
+          <div class="verb-menu">
+            <div class="verb-label">ASK ABOUT WHICH MEMBER?</div>
+            {#if discussableMembers.length === 0}
+              <div class="empty-hint">
+                {npc.name.toUpperCase()} WON'T DISCUSS OTHER MEMBERS WITH YOU YET.<br/>
+                BUILD WARMER RELATIONS, OR FIND SHARED COMMITTEES/BILLS.
+              </div>
+            {:else}
+              <div class="sub-menu-list">
+                {#each discussableMembers as target}
+                  <button class="verb-opt" onclick={() => openMemberDiscussion(target)}>
+                    {target.name.toUpperCase()}
+                    <span class="verb-tag">{target.party === 'feralist' ? 'F' : 'C'} &bull; SEN. {target.seniority}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            <button class="verb-opt verb-exit" onclick={() => { subMenu = 'none'; resetToVerbs(); }}>CANCEL</button>
+          </div>
         {:else if phase === 'ask' && currentBark}
           <!-- NPC Response -->
           <div class="npc-response">
@@ -871,6 +1428,30 @@
             {/if}
             <div class="bark-text">"{currentBark.text}"</div>
           </div>
+
+          {#if discussReadout}
+            <!-- Discussion Readout — tier-scaled intel -->
+            <div class="readout-section" class:readout-misleading={discussReadout.misleading} class:readout-empty={discussReadout.empty}>
+              <div class="readout-header">
+                READOUT: {discussReadout.title}
+                {#if discussReadout.misleading}<span class="readout-warning-badge">UNRELIABLE</span>{/if}
+                {#if discussReadout.empty}<span class="readout-empty-badge">NO INTEL</span>{/if}
+              </div>
+              <ul class="readout-lines">
+                {#each discussReadout.lines as line}
+                  <li class="readout-line"
+                      class:rl-positive={line.positive}
+                      class:rl-negative={line.negative}
+                      class:rl-warning={line.warning}>
+                    {line.text}
+                  </li>
+                {/each}
+              </ul>
+              {#if !discussReadout.empty && !discussReadout.misleading}
+                <div class="readout-footer">LOGGED TO INTEL RECORD.</div>
+              {/if}
+            </div>
+          {/if}
 
           {#if tradeOptions.length > 0}
             <!-- Trade Options (Tier 4 response) -->
@@ -978,6 +1559,60 @@
     font-size: 1.2rem;
     text-transform: uppercase;
     box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.4);
+  }
+  .prep-sidebar {
+    margin-top: 10px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 2px solid var(--warm-amber);
+    padding: 6px 8px;
+    max-height: 260px;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .prep-sidebar::-webkit-scrollbar { display: none; }
+  .prep-header {
+    font-size: 0.9rem;
+    color: var(--warm-amber);
+    letter-spacing: 0.05em;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed #777;
+    margin-bottom: 5px;
+  }
+  .prep-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .prep-entry {
+    padding: 4px 5px;
+    background: rgba(255, 255, 255, 0.06);
+    border-left: 2px solid #666;
+  }
+  .prep-entry.prep-pinned {
+    border-left-color: var(--primary-red);
+  }
+  .prep-entry-meta {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 2px;
+  }
+  .prep-day {
+    font-size: 0.75rem;
+    color: var(--warm-amber);
+  }
+  .prep-imp {
+    font-size: 0.7rem;
+    padding: 0 3px;
+    background: #555;
+    color: white;
+  }
+  .prep-imp-high { background: var(--primary-red); }
+  .prep-imp-medium { background: var(--warm-amber); color: var(--black); }
+  .prep-imp-low { background: #777; }
+  .prep-headline {
+    font-size: 0.95rem;
+    color: #eee;
+    line-height: 1.2;
   }
   .npc-title {
     font-size: 1.2rem;
@@ -1116,6 +1751,92 @@
     padding: 0 4px;
     color: #444;
     flex-shrink: 0;
+  }
+  .verb-subhead {
+    font-size: 1rem;
+    color: var(--warm-amber);
+    padding: 6px 2px 2px;
+    letter-spacing: 0.05em;
+    border-bottom: 1px dashed #aaa;
+    margin-bottom: 2px;
+  }
+  .empty-hint {
+    font-size: 1.1rem;
+    color: #aaa;
+    padding: 12px;
+    text-align: center;
+    line-height: 1.5;
+  }
+  .readout-section {
+    margin-top: 10px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--warm-amber);
+  }
+  .readout-section.readout-misleading {
+    border-color: var(--primary-red);
+  }
+  .readout-section.readout-empty {
+    border-color: #666;
+    opacity: 0.85;
+  }
+  .readout-header {
+    font-size: 1.1rem;
+    letter-spacing: 0.06em;
+    color: var(--warm-amber);
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+  }
+  .readout-warning-badge {
+    font-size: 0.85rem;
+    background: var(--primary-red);
+    color: white;
+    padding: 1px 4px;
+  }
+  .readout-empty-badge {
+    font-size: 0.85rem;
+    background: #666;
+    color: white;
+    padding: 1px 4px;
+  }
+  .readout-lines {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .readout-line {
+    font-size: 1.15rem;
+    color: #ddd;
+    padding-left: 10px;
+    position: relative;
+  }
+  .readout-line::before {
+    content: '›';
+    position: absolute;
+    left: 0;
+    color: #888;
+  }
+  .readout-line.rl-positive {
+    color: #9fe89f;
+  }
+  .readout-line.rl-negative {
+    color: #ff9f8f;
+  }
+  .readout-line.rl-warning {
+    color: #f0c050;
+  }
+  .readout-footer {
+    margin-top: 6px;
+    font-size: 0.9rem;
+    color: #999;
+    letter-spacing: 0.06em;
+    text-align: right;
   }
   .npc-response {
     display: flex;

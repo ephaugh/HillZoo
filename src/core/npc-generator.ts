@@ -306,6 +306,7 @@ export function generateWorld(creation: CreationState): GameState {
       knownDeals: [],
       meetingCount: {},
     },
+    intelLog: [],
 
     npcDeals: [],
     meetingRequests: [],

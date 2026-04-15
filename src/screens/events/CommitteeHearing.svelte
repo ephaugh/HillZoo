@@ -1,12 +1,13 @@
 <script lang="ts">
   import type { GameState, Bill, Committee, NPC } from '../../core/types';
   import { ISSUE_LABELS, COMMITTEE_ISSUES, CROSS_CUTTING_REFERRAL, type CrossCuttingIssue } from '../../core/types';
-  import { getSentimentTier } from '../../core/utils';
+  import { getSentimentTier, createRng } from '../../core/utils';
   import { getNpcRoleLabel } from '../../core/roles';
   import { gameStore } from '../../stores/game';
   import { recordVoteForReportCards, updateReportCards } from '../../core/turn-processor';
+  import { addIntelEntry } from '../../stores/actions';
 
-  let { gameState, onComplete }: { gameState: GameState; onComplete: () => void } = $props();
+  let { gameState, onComplete }: { gameState: GameState; npcMeetingInSlot?: boolean; onComplete: (opts?: { galleryObserved?: boolean }) => void } = $props();
 
   // Find the bill being heard from today's schedule
   let hearingEntry = $derived(
@@ -101,11 +102,113 @@
   let majority = $derived(Math.ceil(totalMembers / 2));
 
   // Hearing phases
-  type Phase = 'testimony' | 'player_vote' | 'deliberation' | 'result';
-  let phase: Phase = $state('testimony');
+  //  'testimony' / 'player_vote' / 'result'  — voting-member flow
+  //  'gallery'                               — non-member observer flow
+  type Phase = 'testimony' | 'player_vote' | 'gallery' | 'result';
+  let phase: Phase = $state(playerOnCommittee ? 'testimony' : 'gallery');
 
   // Player's vote choice
   let playerVote: 'yes' | 'no' | 'abstain' | null = $state(null);
+
+  // ── Gallery Mode: condensed observation ──
+  // 2-3 barks from committee members + 1 intel item derived from game state.
+  // Player does NOT vote. Slot is NOT consumed (see App.svelte routing).
+  const galleryRng = createRng(gameState.seed + gameState.currentDay * 97 + (hearingEntry?.billId?.length ?? 0));
+
+  let galleryBarks = $derived.by<string[]>(() => {
+    if (phase !== 'gallery') return [];
+    const b = bill();
+    const barks: string[] = [];
+
+    // Bark 1: Chair opens — framed by their disposition toward the author
+    const chair = chairNpc;
+    if (chair) {
+      const chairSent = gameState.sentiment[chair.id] ?? 0;
+      const chairTier = getSentimentTier(chairSent);
+      let chairBark: string;
+      if (b.author === 'player') {
+        if (chairTier === 'warm' || chairTier === 'allied') {
+          chairBark = `CHAIR ${chair.name.toUpperCase()} OPENS — "A WELL-CRAFTED PROPOSAL. LET'S HEAR IT OUT."`;
+        } else if (chairTier === 'cold' || chairTier === 'hostile') {
+          chairBark = `CHAIR ${chair.name.toUpperCase()} GAVELS — "WE'LL GIVE THE AUTHOR THEIR HEARING. THAT'S ALL I PROMISE."`;
+        } else {
+          chairBark = `CHAIR ${chair.name.toUpperCase()} GAVELS THE HEARING INTO ORDER. "PROCEED."`;
+        }
+      } else {
+        chairBark = `CHAIR ${chair.name.toUpperCase()} CALLS THE HEARING TO ORDER ON Z.B. ${b.number}.`;
+      }
+      barks.push(chairBark);
+    }
+
+    // Bark 2: strongest supporting voice
+    const supporters = npcMembers
+      .filter(m => !m.isChair && (m.tier === 'warm' || m.tier === 'allied'))
+      .sort((a, x) => (gameState.sentiment[x.id] ?? 0) - (gameState.sentiment[a.id] ?? 0));
+    const opponents = npcMembers
+      .filter(m => !m.isChair && (m.tier === 'cold' || m.tier === 'hostile'))
+      .sort((a, x) => (gameState.sentiment[a.id] ?? 0) - (gameState.sentiment[x.id] ?? 0));
+
+    if (supporters.length > 0) {
+      const s = supporters[0];
+      barks.push(`${s.name.toUpperCase()} SPEAKS IN FAVOR — "THIS ADDRESSES A REAL NEED. I URGE MY COLLEAGUES TO ADVANCE IT."`);
+    } else {
+      const neutrals = npcMembers.filter(m => !m.isChair && m.tier === 'neutral');
+      if (neutrals.length > 0) {
+        barks.push(`${neutrals[0].name.toUpperCase()} WEIGHS IN — "I HAVE QUESTIONS, BUT I'M KEEPING AN OPEN MIND."`);
+      }
+    }
+
+    // Bark 3: opposition voice
+    if (opponents.length > 0 && barks.length < 3) {
+      const o = opponents[0];
+      barks.push(`${o.name.toUpperCase()} VOICES CONCERNS — "THE ${ISSUE_LABELS[b.antiTag].toUpperCase()} LANGUAGE IS A BRIDGE TOO FAR."`);
+    } else if (barks.length < 3) {
+      const others = npcMembers.filter(m => !m.isChair && m.tier === 'neutral');
+      if (others.length > 1) {
+        const idx = Math.floor(galleryRng() * (others.length - 1)) + 1;
+        barks.push(`${others[idx].name.toUpperCase()} RESERVES JUDGMENT — "I'LL VOTE MY DISTRICT. AS ALWAYS."`);
+      }
+    }
+
+    return barks;
+  });
+
+  // Intel item derived from observation — reveals one piece of information
+  let galleryIntel = $derived.by<string>(() => {
+    if (phase !== 'gallery') return '';
+    const chair = chairNpc;
+
+    if (chair) {
+      const chairTier = getSentimentTier(gameState.sentiment[chair.id] ?? 0);
+      if (chairTier === 'allied' || chairTier === 'warm') {
+        return `CHAIR ${chair.name.toUpperCase()} APPEARS FAVORABLE TOWARD THE AUTHOR.`;
+      }
+      if (chairTier === 'hostile') {
+        return `CHAIR ${chair.name.toUpperCase()} IS VISIBLY COOL ON THIS BILL.`;
+      }
+    }
+
+    if (likelyYes >= majority) {
+      return `THE COMMITTEE APPEARS TO HAVE THE VOTES TO ADVANCE.`;
+    }
+    if (likelyNo >= majority) {
+      return `THE COMMITTEE APPEARS POISED TO KILL THIS BILL.`;
+    }
+    if (undecided >= Math.max(1, Math.ceil(npcMembers.length / 2))) {
+      return `MOST MEMBERS ARE KEEPING THEIR CARDS CLOSE — THE OUTCOME IS UNCERTAIN.`;
+    }
+
+    const extreme = npcMembers
+      .filter(m => !m.isChair)
+      .sort((a, x) => Math.abs(gameState.sentiment[x.id] ?? 0) - Math.abs(gameState.sentiment[a.id] ?? 0))[0];
+    if (extreme) {
+      const lean = extreme.tier === 'warm' || extreme.tier === 'allied' ? 'LIKELY YES'
+                 : extreme.tier === 'cold' || extreme.tier === 'hostile' ? 'LIKELY NO'
+                 : 'UNDECIDED';
+      return `${extreme.name.toUpperCase()} — ${lean}.`;
+    }
+    return `THE ROOM IS QUIET. READS ARE HARD TO GATHER FROM THE GALLERY.`;
+  });
 
   // Result
   let hearingPassed = $state(false);
@@ -113,12 +216,30 @@
   let finalNo = $state(0);
 
   function proceedToPlayerVote() {
-    // If player is on the committee, let them vote. Otherwise skip to deliberation.
-    if (playerOnCommittee) {
-      phase = 'player_vote';
-    } else {
-      resolveVote();
+    // Voting path (player is on committee)
+    phase = 'player_vote';
+  }
+
+  function resolveGalleryVote() {
+    // Non-member path: resolve committee vote without a player vote input,
+    // then show the result so the gallery observer sees the outcome.
+    // Also record the gallery intel into the persistent Intel Log.
+    const b = bill();
+    const c = committee();
+    if (galleryIntel) {
+      addIntelEntry({
+        source: 'gallery_hearing',
+        category: 'committee_read',
+        importance: b.author === 'player' ? 'high' : 'medium',
+        headline: `${c.name.toUpperCase()} HEARING — Z.B. ${b.number}: ${galleryIntel}`,
+        detail: `OBSERVED FROM THE GALLERY DURING ${c.name.toUpperCase()} HEARING ON Z.B. ${b.number} — THE ${b.name.toUpperCase()} ACT. ${galleryIntel}`,
+        relatedNpcIds: chairNpc ? [chairNpc.id] : [],
+        relatedBillIds: [b.id],
+        relatedIssues: [b.proTags[0], b.proTags[1], b.antiTag],
+        concernsPlayerBill: b.author === 'player',
+      });
     }
+    resolveVote();
   }
 
   function castPlayerVote(vote: 'yes' | 'no' | 'abstain') {
@@ -274,6 +395,33 @@
                 <div class="tally-note">{majority} VOTES NEEDED TO ADVANCE</div>
               </div>
             </div>
+          {:else if phase === 'gallery'}
+            <div class="phase-section">
+              <div class="col-title">OBSERVING FROM THE GALLERY</div>
+              <div class="testimony-text">
+                <p class="gallery-framing">YOU ARE NOT A MEMBER OF THIS COMMITTEE. YOU WATCH THE HEARING UNFOLD FROM THE GALLERY.</p>
+                <div class="gallery-barks">
+                  {#each galleryBarks as bark}
+                    <div class="gallery-bark">&gt; {bark}</div>
+                  {/each}
+                </div>
+                {#if galleryIntel}
+                  <div class="gallery-intel">
+                    <div class="intel-label">INTEL GATHERED:</div>
+                    <div class="intel-text">{galleryIntel}</div>
+                  </div>
+                {/if}
+              </div>
+              <div class="vote-preview">
+                <div class="col-title" style="margin-top: 12px;">PRELIMINARY READ</div>
+                <div class="tally-row">
+                  <span class="tally-yes">LIKELY YES: {likelyYes}</span>
+                  <span class="tally-und">UNDECIDED: {undecided}</span>
+                  <span class="tally-no">LIKELY NO: {likelyNo}</span>
+                </div>
+                <div class="tally-note">{majority} VOTES NEEDED TO ADVANCE &mdash; YOUR SCHEDULED BUSINESS CONTINUES AFTER.</div>
+              </div>
+            </div>
           {:else if phase === 'player_vote'}
             <div class="phase-section">
               <div class="col-title">YOUR VOTE</div>
@@ -330,9 +478,11 @@
     <div class="hearing-footer">
       {#if phase === 'testimony'}
         <button class="btn" onclick={proceedToPlayerVote}>CALL THE VOTE</button>
+      {:else if phase === 'gallery'}
+        <button class="btn" onclick={resolveGalleryVote}>SEE THE VOTE</button>
       {:else if phase === 'result'}
-        <button class="btn" onclick={onComplete}>
-          {#if hearingPassed}PROCEED TO MARKUP{:else}CONTINUE{/if}
+        <button class="btn" onclick={() => onComplete({ galleryObserved: !playerOnCommittee })}>
+          {#if hearingPassed && (isPlayerBill || playerOnCommittee)}PROCEED TO MARKUP{:else if !playerOnCommittee}RETURN TO YOUR DAY{:else}CONTINUE{/if}
         </button>
       {/if}
     </div>
@@ -563,5 +713,39 @@
     justify-content: flex-end;
     border-top: 3px solid var(--black);
     background: var(--marble-dark);
+  }
+  .gallery-framing {
+    font-style: italic;
+    color: #555;
+  }
+  .gallery-barks {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .gallery-bark {
+    padding: 6px 10px;
+    background: #000;
+    color: var(--phosphor-green);
+    border-left: 3px solid var(--phosphor-green);
+    font-size: 1.05rem;
+    line-height: 1.3;
+  }
+  .gallery-intel {
+    margin-top: 12px;
+    padding: 8px 10px;
+    background: var(--marble-white);
+    border: 2px solid var(--gold);
+  }
+  .intel-label {
+    font-size: 0.95rem;
+    color: var(--mahogany);
+    font-weight: bold;
+    margin-bottom: 4px;
+  }
+  .intel-text {
+    font-size: 1.1rem;
+    color: var(--black);
   }
 </style>

@@ -92,3 +92,30 @@ export function getSentimentTier(score: number): 'hostile' | 'cold' | 'neutral' 
   if (score <= 60) return 'warm';
   return 'allied';
 }
+
+/**
+ * Narrative description of a sentiment shift. Player-facing.
+ * Never returns a number. Use this anywhere the UI would otherwise show +5 / -3.
+ */
+export function getRelationshipChangeNarrative(shift: number): string {
+  if (shift >= 8) return 'SEEMS GENUINELY PLEASED';
+  if (shift >= 4) return 'SEEMS PLEASED';
+  if (shift >= 1) return 'APPEARS SATISFIED';
+  if (shift === 0) return 'NODS POLITELY';
+  if (shift >= -3) return 'SEEMS SLIGHTLY PUT OFF';
+  if (shift >= -7) return 'HARDENS VISIBLY';
+  return 'VISIBLY ANGERED';
+}
+
+/**
+ * Narrative description of a sentiment tier. Player-facing.
+ */
+export function getTierDescription(tier: 'hostile' | 'cold' | 'neutral' | 'warm' | 'allied'): string {
+  switch (tier) {
+    case 'hostile': return 'HOSTILE — WILL ACTIVELY WORK AGAINST YOU';
+    case 'cold':    return 'COLD — DISTANT, RELUCTANT TO ENGAGE';
+    case 'neutral': return 'NEUTRAL — NO STRONG LEANING';
+    case 'warm':    return 'WARM — INCLINED TO WORK WITH YOU';
+    case 'allied':  return 'ALLIED — WILL GO TO THE MAT FOR YOU';
+  }
+}

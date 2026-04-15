@@ -95,3 +95,22 @@ export const urgentPromises = derived(gameStore, $g => {
     p.fulfilled === null && p.dueBy && p.dueBy - $g.currentDay <= 3
   );
 });
+
+// Intel log (newest-first)
+export const intelLogSorted = derived(gameStore, $g => {
+  if (!$g) return [];
+  return [...$g.intelLog].sort((a, b) => b.day - a.day);
+});
+
+/**
+ * Return a derived store of intel entries relevant to a specific NPC.
+ * Use for the meeting prep sidebar.
+ */
+export function intelForNpc(npcId: string) {
+  return derived(gameStore, $g => {
+    if (!$g) return [];
+    return $g.intelLog
+      .filter(e => e.relatedNpcIds.includes(npcId))
+      .sort((a, b) => b.day - a.day);
+  });
+}

@@ -27,6 +27,7 @@
   let FactionsReport: any = $state(null);
   let PromiseLedger: any = $state(null);
   let GossipLog: any = $state(null);
+  let IntelLog: any = $state(null);
   let CalendarView: any = $state(null);
   let BillStatus: any = $state(null);
   let WhipCount: any = $state(null);
@@ -49,6 +50,7 @@
     import('./screens/reference/FactionsReport.svelte').then(m => FactionsReport = m.default).catch(() => {});
     import('./screens/reference/PromiseLedger.svelte').then(m => PromiseLedger = m.default).catch(() => {});
     import('./screens/reference/GossipLog.svelte').then(m => GossipLog = m.default).catch(() => {});
+    import('./screens/reference/IntelLog.svelte').then(m => IntelLog = m.default).catch(() => {});
     import('./screens/reference/CalendarView.svelte').then(m => CalendarView = m.default).catch(() => {});
     import('./screens/reference/BillStatus.svelte').then(m => BillStatus = m.default).catch(() => {});
     import('./screens/reference/WhipCount.svelte').then(m => WhipCount = m.default).catch(() => {});
@@ -327,11 +329,12 @@
     finishSlot();
   }
 
-  function handleEventComplete() {
+  function handleEventComplete(opts?: { galleryObserved?: boolean }) {
     if (!game) { currentScreen = 'slot_selection'; return; }
 
     // Hearing → Markup chain: if player's bill just advanced to markup, go to markup screen
-    if (currentScreen === 'committee_hearing' && game.playerBill.stage === 'markup') {
+    // (Only for bills where player is on the committee or it's their bill.)
+    if (currentScreen === 'committee_hearing' && game.playerBill.stage === 'markup' && !opts?.galleryObserved) {
       currentScreen = 'committee_markup';
       return;
     }
@@ -352,8 +355,22 @@
       return;
     }
 
+    // Gallery-observed hearing: slot is NOT consumed.
+    // If a meeting was scheduled for this slot, run it now.
+    if (currentScreen === 'committee_hearing' && opts?.galleryObserved) {
+      const meetingEntry = game.schedule.find(
+        e => e.day === game!.currentDay && e.slot === game!.currentSlot && e.type === 'meeting' && e.npcId
+      );
+      if (meetingEntry && meetingEntry.npcId) {
+        startMeeting(meetingEntry.npcId);
+        return;
+      }
+      // No scheduled meeting — return to slot selection so player can act
+      currentScreen = 'slot_selection';
+      return;
+    }
+
     // Check for other mandatory events in this slot
-    const currentType = currentScreen.replace('_', '');
     const nextMandatory = game.schedule.find(
       e => e.day === game!.currentDay && e.slot === game!.currentSlot && e.mandatory
         && !['caucus', 'primary', 'committee_hearing', 'committee_markup'].includes(e.type)
@@ -487,6 +504,8 @@
               <svelte:component this={PromiseLedger} gameState={game} onClose={closeRefTab} />
             {:else if activeRefTab === 'gossip' && GossipLog}
               <svelte:component this={GossipLog} gameState={game} onClose={closeRefTab} />
+            {:else if activeRefTab === 'intel' && IntelLog}
+              <svelte:component this={IntelLog} gameState={game} onClose={closeRefTab} />
             {:else if activeRefTab === 'calendar' && CalendarView}
               <svelte:component this={CalendarView} gameState={game} onClose={closeRefTab} />
             {:else if activeRefTab === 'bills' && BillStatus}
