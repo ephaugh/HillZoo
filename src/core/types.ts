@@ -85,7 +85,11 @@ export const SPECIES_LIST = [
   'Fox', 'Owl', 'Bear', 'Rabbit', 'Deer', 'Eagle', 'Wolf', 'Turtle',
   'Raccoon', 'Hawk', 'Beaver', 'Otter', 'Crow', 'Badger', 'Moose',
   'Lynx', 'Salmon', 'Heron', 'Rattlesnake', 'Coyote', 'Porcupine',
-  'Frog', 'Skunk', 'Armadillo',
+  'Frog', 'Skunk', 'Armadillo', 'Weasel', 'Mole', 'Bat', 'Bison',
+  'Pelican', 'Crane', 'Opossum', 'Vulture', 'Wolverine', 'Ferret',
+  'Mink', 'Capybara', 'Manatee', 'Ibis', 'Condor', 'Magpie', 'Boar',
+  'Warthog', 'Meerkat', 'Pangolin', 'Newt', 'Quail', 'Stork',
+  'Iguana', 'Tapir', 'Mandrill',
 ] as const;
 
 export type Species = (typeof SPECIES_LIST)[number];

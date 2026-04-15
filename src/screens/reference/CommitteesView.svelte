@@ -41,7 +41,7 @@
       if (mId === 'player') {
         return {
           id: 'player',
-          name: `${gameState.player.species} (YOU)`,
+          name: `Sen. ${gameState.player.species} (YOU)`,
           party: gameState.player.party,
           seniority: 1,
           tier: '--',
@@ -86,7 +86,7 @@
       .map(b => {
         const isPlayerBill = b.author === 'player';
         const author = isPlayerBill
-          ? gameState.player.species
+          ? `Sen. ${gameState.player.species}`
           : (gameState.npcs.find(n => n.id === b.author)?.name ?? 'UNKNOWN');
         return { bill: b, authorName: author, isPlayerBill };
       })

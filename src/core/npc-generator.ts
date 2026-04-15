@@ -20,31 +20,6 @@ import {
   weightedRandom, randomInt, getSentimentTier,
 } from './utils';
 
-// ── Name generation ──
-const FIRST_NAMES = [
-  'Aldric', 'Bramwell', 'Cedric', 'Dorothea', 'Edmund', 'Felicity',
-  'Gideon', 'Harriet', 'Irving', 'Josephine', 'Kendrick', 'Lavinia',
-  'Mortimer', 'Neville', 'Ophelia', 'Percival', 'Quintus', 'Rosalind',
-  'Silas', 'Theodora', 'Ulric', 'Vivienne', 'Winslow', 'Ximena',
-  'York', 'Zelda', 'Alistair', 'Beatrice', 'Cornelius', 'Desmond',
-  'Eleanora', 'Fletcher', 'Gertrude', 'Horace', 'Isolde', 'Jarvis',
-  'Katarina', 'Leopold', 'Meredith', 'Norbert', 'Octavia', 'Preston',
-  'Ramona', 'Sterling', 'Tabitha', 'Vernon', 'Wilhelmina', 'Augustus',
-  'Bartholomew', 'Clementine',
-];
-
-const LAST_NAMES = [
-  'Ashford', 'Blackwood', 'Crawford', 'Dunmore', 'Everett', 'Foxworth',
-  'Grayson', 'Holloway', 'Ironside', 'Jasper', 'Kirkland', 'Lancaster',
-  'Montague', 'Northcott', 'Osgood', 'Pemberton', 'Quincy', 'Ravenscroft',
-  'Stonebridge', 'Thornton', 'Underwood', 'Vickers', 'Whitfield', 'Yardley',
-  'Ashworth', 'Barrington', 'Coldwell', 'Devereaux', 'Eastwick', 'Fairbanks',
-  'Gatewood', 'Hartwell', 'Ingram', 'Jennings', 'Kemp', 'Lockwood',
-  'Moorehouse', 'Newberry', 'Oakridge', 'Prescott', 'Redmond', 'Shelby',
-  'Tidewater', 'Upton', 'Vanhorn', 'Wellspring', 'Yarmouth', 'Aldridge',
-  'Bingham', 'Carstairs',
-];
-
 // ── Party balance seat splits ──
 const PARTY_SPLITS: Record<PartyBalanceSetting, { majority: number; minority: number }> = {
   large_majority: { majority: 30, minority: 20 },
@@ -389,11 +364,6 @@ function generateNpcs(
   const speciesPool = shuffle(rng, SPECIES_LIST.filter(s => s !== playerSpecies));
   let speciesIdx = 0;
 
-  // Name pools
-  const firstNames = shuffle(rng, FIRST_NAMES);
-  const lastNames = shuffle(rng, LAST_NAMES);
-  let nameIdx = 0;
-
   // Seniority weights: ~30% sen1, ~25% sen2, ~20% sen3, ~15% sen4, ~10% sen5
   const seniorityItems = [1, 2, 3, 4, 5];
   const seniorityWeights = [30, 25, 20, 15, 10];
@@ -407,15 +377,12 @@ function generateNpcs(
   };
 
   function createNpc(party: PartyName, index: number): NPC {
-    // Species — cycle through, allowing repeats after first pass
-    const npcSpecies = speciesPool[speciesIdx % speciesPool.length] as typeof SPECIES_LIST[number];
+    // Species — draw sequentially from shuffled pool, no repeats
+    const npcSpecies = speciesPool[speciesIdx] as typeof SPECIES_LIST[number];
     speciesIdx++;
 
     // Name
-    const firstName = firstNames[nameIdx % firstNames.length];
-    const lastName = lastNames[nameIdx % lastNames.length];
-    nameIdx++;
-    const name = `${firstName} ${lastName}`;
+    const name = `Sen. ${npcSpecies}`;
 
     // Seniority
     const seniority = weightedRandom(rng, seniorityItems, seniorityWeights);

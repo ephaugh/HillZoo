@@ -63,7 +63,7 @@
       if (mId === 'player') {
         return {
           id: 'player',
-          name: `${gameState.player.species} (YOU)`,
+          name: `Sen. ${gameState.player.species} (YOU)`,
           species: gameState.player.species,
           party: gameState.player.party,
           tier: '--',
