@@ -1,0 +1,256 @@
+export interface DiscussionBark {
+  category: 'policy_area' | 'specific_bill' | 'another_member';
+  sentiment: 'warm_allied' | 'neutral' | 'cold_hostile';
+  text: string;
+}
+
+export const DISCUSSION_BARKS: DiscussionBark[] = [
+  // --- Discussing a Policy Area --- //
+
+  // Warm/Allied
+  {
+    category: 'policy_area',
+    sentiment: 'warm_allied',
+    text: "Pull up a chair — the version of this issue you've been hearing is about half true.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'warm_allied',
+    text: "You want the real picture? Fine. But only because I actually like you.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'warm_allied',
+    text: "I've been in this fight longer than most people remember. Ask me anything.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'warm_allied',
+    text: "There's a reason nobody talks about this issue honestly. I'm going to.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'warm_allied',
+    text: "You came to the right office. Most people in this building will waste your time on this — I won't.",
+  },
+
+  // Neutral
+  {
+    category: 'policy_area',
+    sentiment: 'neutral',
+    text: "It's a complex issue. Lots of perspectives, as you'd expect.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'neutral',
+    text: "People have strong feelings about it. I'll let the record speak for itself.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'neutral',
+    text: "That's one of those areas where the chamber's pretty divided. Natural disagreement, really.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'neutral',
+    text: "Hard to say which way the wind's blowing. Depends who you ask, I suppose.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'neutral',
+    text: "It's important work, whatever angle you're coming from. Can't say much beyond that.",
+  },
+
+  // Cold/Hostile
+  {
+    category: 'policy_area',
+    sentiment: 'cold_hostile',
+    text: "Not really my area. You'd have to ask around.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'cold_hostile',
+    text: "Why do you care what I think? Go find your own answers.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'cold_hostile',
+    text: "That's between me and my conscience. Assuming I have one.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'cold_hostile',
+    text: "Waste of time discussing it. Nothing changes anyway.",
+  },
+  {
+    category: 'policy_area',
+    sentiment: 'cold_hostile',
+    text: "I'm not going to sit here and spell out my positions for you. That's what press releases are for.",
+  },
+
+  // --- Discussing a Specific Bill --- //
+
+  // Warm/Allied
+  {
+    category: 'specific_bill',
+    sentiment: 'warm_allied',
+    text: "I've read that bill three times and each time I found something new buried in it.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'warm_allied',
+    text: "Everyone's got an opinion on that one. Mine happens to be informed.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'warm_allied',
+    text: "You should hear what's actually in that bill before you decide how you feel about it.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'warm_allied',
+    text: "That legislation has a public face and a private one. I know both.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'warm_allied',
+    text: "Smart of you to ask before committing. Most people don't bother.",
+  },
+
+  // Neutral
+  {
+    category: 'specific_bill',
+    sentiment: 'neutral',
+    text: "It's got some merit, I suppose. Also some concerns. Pretty balanced overall, I'd say.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'neutral',
+    text: "The sponsors seem earnest about it. Time will tell if it actually works.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'neutral',
+    text: "There's text I agree with and text I don't. Like most bills, really.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'neutral',
+    text: "It's been through enough drafts that nobody remembers the original intent anymore.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'neutral',
+    text: "Respectable piece of legislation. Could go either way in committee.",
+  },
+
+  // Cold/Hostile
+  {
+    category: 'specific_bill',
+    sentiment: 'cold_hostile',
+    text: "Don't ask me to read your homework for you.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'cold_hostile',
+    text: "It's a bill. They all look the same after a while.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'cold_hostile',
+    text: "I'm not here to do free consulting. Next question.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'cold_hostile',
+    text: "Ask the sponsor. I'm sure they'll tell you exactly what you want to hear.",
+  },
+  {
+    category: 'specific_bill',
+    sentiment: 'cold_hostile',
+    text: "Not interested in walking through the fine print with you. Sorry.",
+  },
+
+  // --- Discussing Another Member --- //
+
+  // Warm/Allied
+  {
+    category: 'another_member',
+    sentiment: 'warm_allied',
+    text: "I've served with them long enough to know the difference between the act and the person.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'warm_allied',
+    text: "You want my honest read? Close the door first.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'warm_allied',
+    text: "That member is more complicated than their reputation suggests. Let me explain.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'warm_allied',
+    text: "I've watched them operate for years now. There are patterns worth knowing about.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'warm_allied',
+    text: "Most people read them wrong. I'll tell you what to actually watch for.",
+  },
+
+  // Neutral
+  {
+    category: 'another_member',
+    sentiment: 'neutral',
+    text: "Seems competent enough. Keeps to themselves mostly. Can't complain.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'neutral',
+    text: "They've got their thing, I've got mine. We get along fine when our interests align.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'neutral',
+    text: "Decent member, from what I can tell. Hard to know anybody's real motivations in here.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'neutral',
+    text: "They're professional, I'll give them that. Beyond that, who knows?",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'neutral',
+    text: "We don't socialize much, but I've got no beef with them.",
+  },
+
+  // Cold/Hostile
+  {
+    category: 'another_member',
+    sentiment: 'cold_hostile',
+    text: "Not my problem what they're up to.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'cold_hostile',
+    text: "Ask them yourself if you want to know about them.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'cold_hostile',
+    text: "I'm not going to sit here and gossip about colleagues. That's beneath me.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'cold_hostile',
+    text: "You seem interested in them. Maybe you should be talking to them instead.",
+  },
+  {
+    category: 'another_member',
+    sentiment: 'cold_hostile',
+    text: "I don't have much to say. And neither should you.",
+  },
+];

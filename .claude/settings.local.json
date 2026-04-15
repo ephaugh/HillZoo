@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(cp -r hill-zoo/node_modules .)",
+      "Bash(cp hill-zoo/package.json hill-zoo/package-lock.json hill-zoo/svelte.config.js hill-zoo/vite.config.ts hill-zoo/tsconfig.json hill-zoo/tsconfig.app.json hill-zoo/tsconfig.node.json hill-zoo/index.html .)",
+      "Bash(rm -rf hill-zoo/node_modules)",
+      "Bash(rm -rf hill-zoo)",
+      "Bash(cd:*)",
+      "Bash(anything else during this task)",
+      "Bash(npx vite:*)"
+    ]
+  }
+}

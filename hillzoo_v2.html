@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Hill Zoo — Tactical HUD v2</title>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --mahogany: #3a130c;
+            --mahogany-light: #5d251a;
+            --mahogany-mid: #4a1a10;
+            --marble: #c0c0c0;
+            --marble-white: #e0e0e0;
+            --marble-dark: #909090;
+            --gold: #b8860b;
+            --gold-light: #edd18a;
+            --black: #000000;
+            --shadow: #1a0a08;
+            --phosphor-green: #33ff33;
+            --phosphor-dim: #1a8a1a;
+            --primary-red: #aa0000;
+            --danger-red: #ff2222;
+            --ega-blue: #0000aa;
+            --ega-cyan: #00aaaa;
+            --warm-amber: #cc8800;
+            --pixel-font: 'VT323', monospace;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            background-color: var(--black);
+            color: var(--black);
+            font-family: var(--pixel-font);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px 0 20px;
+            image-rendering: pixelated;
+        }
+
+        /* ============================================
+           PERSISTENT BRASS HEADER — Top Status Bar
+           ============================================ */
+        .campaign-header {
+            width: 1160px;
+            background: var(--gold);
+            border: 4px solid var(--black);
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;
+            padding: 8px 6px;
+            gap: 4px;
+            box-shadow: inset 3px 3px 0px var(--gold-light), inset -3px -3px 0px var(--mahogany);
+        }
+
+        .stat-box { text-align: center; padding: 2px 4px; }
+        .stat-label { font-size: 1.1rem; color: var(--mahogany); text-transform: uppercase; letter-spacing: 1px; }
+        .stat-value { font-size: 1.6rem; color: var(--black); font-weight: bold; line-height: 1; }
+        .stat-value.danger { color: var(--primary-red); }
+        .stat-value.safe { color: #006600; }
+
+        .stat-box.primary-box {
+            border: 2px solid var(--mahogany);
+            background: var(--gold-light);
+            padding: 4px 8px;
+        }
+
+        .primary-bar-track {
+            width: 100%;
+            height: 8px;
+            background: #333;
+            border: 1px solid var(--black);
+            margin-top: 3px;
+        }
+        .primary-bar-fill {
+            height: 100%;
+            background: var(--warm-amber);
+            transition: width 0.3s;
+        }
+        .primary-bar-fill.hot { background: var(--primary-red); }
+
+        .header-divider {
+            width: 2px;
+            background: var(--mahogany);
+            align-self: stretch;
+            margin: 0 2px;
+        }
+
+        /* ============================================
+           GAME STAGE — Main Play Area
+           ============================================ */
+        .game-stage {
+            width: 980px;
+            height: 560px;
+            background: var(--shadow);
+            border: 6px solid var(--mahogany);
+            border-top: 4px solid var(--mahogany);
+            border-right: 3px solid var(--mahogany);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stage-background {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: var(--mahogany);
+            background-image: radial-gradient(var(--mahogany-light) 1.5px, transparent 0);
+            background-size: 4px 4px;
+        }
+
+        /* ============================================
+           PHASE INDICATOR — Top Left
+           ============================================ */
+        .phase-indicator {
+            position: absolute;
+            top: 10px;
+            left: 14px;
+            display: flex;
+            gap: 4px;
+            z-index: 20;
+        }
+
+        .phase-pip {
+            background: var(--marble-dark);
+            border: 2px solid var(--black);
+            padding: 3px 12px;
+            font-size: 1.1rem;
+            font-family: var(--pixel-font);
+            text-transform: uppercase;
+            color: #555;
+            box-shadow: inset 1px 1px 0px rgba(255,255,255,0.2);
+        }
+        .phase-pip.active {
+            background: var(--gold);
+            color: var(--black);
+            box-shadow: inset 2px 2px 0px var(--gold-light), 3px 3px 0px rgba(0,0,0,0.3);
+        }
+        .phase-pip.completed {
+            background: var(--marble);
+            color: #333;
+        }
+
+        /* ============================================
+           REFERENCE TABS — Top Right
+           ============================================ */
+        .ref-tabs {
+            position: absolute;
+            top: 10px;
+            right: 14px;
+            display: flex;
+            gap: 6px;
+            z-index: 20;
+        }
+        .ref-tab {
+            background: var(--mahogany-mid);
+            border: 2px solid var(--black);
+            padding: 3px 10px;
+            font-size: 1rem;
+            font-family: var(--pixel-font);
+            color: var(--gold);
+            cursor: pointer;
+            text-transform: uppercase;
+            box-shadow: inset 1px 1px 0px rgba(255,255,255,0.08);
+        }
+        .ref-tab:hover {
+            background: var(--gold);
+            color: var(--black);
+        }
+
+        /* ============================================
+           NPC PORTRAIT — Left Side
+           ============================================ */
+        .character-overlay {
+            position: absolute;
+            top: 70px;
+            left: 10px;
+            width: 270px;
+            z-index: 5;
+        }
+
+        /* Ornate pixel frame wrapper */
+        .portrait-frame {
+            position: relative;
+            padding: 14px;
+            background: var(--gold);
+            image-rendering: pixelated;
+        }
+
+        /* Outer border — chunky black edge */
+        .portrait-frame::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border: 4px solid var(--black);
+            /* Pixel stepped corners via box-shadow */
+            box-shadow:
+                /* outer glow / drop shadow */
+                6px 6px 0px rgba(0,0,0,0.5),
+                /* corner nubs — top-left */
+                -4px -4px 0px 0px var(--black),
+                -8px -8px 0px 0px var(--gold),
+                -8px 0px 0px 0px var(--black),
+                0px -8px 0px 0px var(--black),
+                /* corner nubs — top-right */
+                4px -4px 0px 0px var(--black),
+                8px -8px 0px 0px var(--gold),
+                8px 0px 0px 0px var(--black),
+                0px -8px 0px 0px var(--black),
+                /* corner nubs — bottom-left */
+                -4px 4px 0px 0px var(--black),
+                -8px 8px 0px 0px var(--gold),
+                -8px 0px 0px 0px var(--black),
+                /* corner nubs — bottom-right */
+                4px 4px 0px 0px var(--black),
+                8px 8px 0px 0px var(--gold);
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* Inner gold frame detail — beveled inset */
+        .portrait-frame::after {
+            content: '';
+            position: absolute;
+            inset: 4px;
+            border: 3px solid var(--black);
+            box-shadow:
+                inset 3px 3px 0px var(--gold-light),
+                inset -3px -3px 0px #8a6508;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* Decorative frame groove between outer and inner */
+        .frame-groove {
+            position: absolute;
+            inset: 8px;
+            border: 2px solid #8a6508;
+            box-shadow: inset 1px 1px 0px var(--gold-light);
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* Corner ornaments — pixel rosettes */
+        .frame-corner {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: var(--gold-light);
+            border: 2px solid var(--black);
+            z-index: 3;
+            box-shadow:
+                inset 2px 2px 0px #fff3c4,
+                inset -2px -2px 0px #8a6508;
+        }
+        .frame-corner.tl { top: 5px; left: 5px; }
+        .frame-corner.tr { top: 5px; right: 5px; }
+        .frame-corner.bl { bottom: 5px; left: 5px; }
+        .frame-corner.br { bottom: 5px; right: 5px; }
+
+        /* Mid-edge ornaments — small pixel studs */
+        .frame-stud {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: var(--gold-light);
+            border: 2px solid #8a6508;
+            z-index: 3;
+            box-shadow: inset 1px 1px 0px #fff3c4;
+        }
+        .frame-stud.top { top: 5px; left: 50%; transform: translateX(-50%); }
+        .frame-stud.bottom { bottom: 5px; left: 50%; transform: translateX(-50%); }
+        .frame-stud.left { left: 5px; top: 50%; transform: translateY(-50%); }
+        .frame-stud.right { right: 5px; top: 50%; transform: translateY(-50%); }
+
+        .pixel-portrait {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 9/10;
+            background: #111;
+            border: 3px solid var(--black);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            z-index: 1;
+            box-shadow: inset 4px 4px 0px rgba(0,0,0,0.6);
+        }
+
+        .pixel-portrait img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center 15%;
+            image-rendering: pixelated;
+        }
+
+        /* Nameplate below portrait frame */
+        .npc-nameplate {
+            background: var(--mahogany);
+            border: 3px solid var(--black);
+            margin-top: 6px;
+            padding: 5px 8px;
+            text-align: center;
+            color: var(--gold);
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            box-shadow: 4px 4px 0px rgba(0,0,0,0.4);
+        }
+        .npc-nameplate .npc-subtitle {
+            color: var(--marble);
+            font-size: 1rem;
+        }
+
+        /* ============================================
+           INTERACTION PANE — Right Side, Multi-Phase
+           ============================================ */
+        .interaction-pane {
+            position: absolute;
+            top: 40px;
+            right: 14px;
+            width: 650px;
+            bottom: 14px;
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+        }
+
+        /* --- DOSSIER (Phase 1: The Read) --- */
+        .dossier-panel {
+            background: var(--marble);
+            border: 3px solid var(--black);
+            box-shadow: inset 3px 3px 0px var(--marble-white), inset -3px -3px 0px #707070, 6px 6px 0px rgba(0,0,0,0.3);
+            margin-bottom: 6px;
+        }
+
+        .dossier-header {
+            background: var(--mahogany);
+            color: var(--gold);
+            padding: 4px 12px;
+            font-size: 1.3rem;
+            border-bottom: 3px solid var(--black);
+            text-transform: uppercase;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .dossier-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0;
+            padding: 0;
+        }
+
+        .dossier-cell {
+            padding: 5px 10px;
+            font-size: 1.15rem;
+            border-bottom: 1px solid #aaa;
+            border-right: 1px solid #aaa;
+            line-height: 1.2;
+        }
+        .dossier-cell:nth-child(even) { border-right: none; }
+        .dossier-cell:nth-last-child(-n+2) { border-bottom: none; }
+
+        .dossier-key { color: #555; text-transform: uppercase; font-size: 1rem; }
+        .dossier-val { color: var(--black); }
+        .dossier-val.warm { color: #006600; }
+        .dossier-val.cold { color: var(--primary-red); }
+        .dossier-val.neutral { color: #444; }
+
+        /* Promise strip */
+        .promise-strip {
+            background: #d4c080;
+            border-top: 2px solid var(--black);
+            padding: 4px 10px;
+            font-size: 1.1rem;
+            color: var(--mahogany);
+        }
+        .promise-strip .promise-icon { color: var(--primary-red); }
+
+        /* --- DIALOGUE (Phase 2: The Ask / Phase 3: The Offer) --- */
+        .dialogue-panel {
+            background: var(--marble);
+            border: 3px solid var(--black);
+            box-shadow: inset 3px 3px 0px var(--marble-white), inset -3px -3px 0px #707070, 6px 6px 0px rgba(0,0,0,0.3);
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .dialogue-header {
+            background: var(--mahogany);
+            color: var(--gold);
+            padding: 4px 12px;
+            font-size: 1.2rem;
+            border-bottom: 3px solid var(--black);
+            text-transform: uppercase;
+        }
+
+        .dialogue-body {
+            padding: 8px 14px;
+            font-size: 1.6rem;
+            line-height: 1.1;
+            color: var(--black);
+        }
+
+        /* --- VERB-OBJECT MENU --- */
+        .verb-menu {
+            padding: 2px 14px 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .verb-menu-label {
+            font-size: 1.05rem;
+            color: #666;
+            text-transform: uppercase;
+            padding: 1px 0 2px;
+            border-bottom: 1px solid #aaa;
+            margin-bottom: 1px;
+        }
+
+        .verb-opt {
+            font-size: 1.3rem;
+            color: var(--ega-blue);
+            cursor: pointer;
+            padding: 2px 6px;
+            border: 2px solid transparent;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            line-height: 1.2;
+        }
+
+        .verb-opt:hover {
+            background: var(--ega-blue);
+            color: white;
+            border: 2px solid var(--black);
+            box-shadow: inset 2px 2px 0px rgba(255,255,255,0.3);
+        }
+
+        .verb-tag {
+            font-size: 1rem;
+            background: #ddd;
+            border: 1px solid #999;
+            padding: 0 4px;
+            color: #444;
+            flex-shrink: 0;
+        }
+
+        .verb-opt:hover .verb-tag {
+            background: rgba(255,255,255,0.2);
+            border-color: rgba(255,255,255,0.4);
+            color: #ccc;
+        }
+
+        /* --- INTEL LEDGER (Green phosphor readout) --- */
+        .intel-ledger {
+            background: #000;
+            padding: 8px 10px;
+            font-size: 1.1rem;
+            border-top: 3px solid var(--black);
+            color: var(--phosphor-green);
+            line-height: 1.3;
+            margin-top: auto;
+        }
+        .intel-ledger .dim { color: var(--phosphor-dim); }
+
+        /* ============================================
+           AGENDA SIDEBAR — Right of Game Stage
+           ============================================ */
+        .stage-wrapper {
+            display: flex;
+            gap: 0;
+            align-items: stretch;
+        }
+
+        .agenda-sidebar {
+            width: 180px;
+            background: #0a0a0a;
+            border: 6px solid var(--mahogany);
+            border-top: 4px solid var(--mahogany);
+            border-left: 3px solid var(--mahogany);
+            display: flex;
+            flex-direction: column;
+            box-shadow: 10px 10px 0px rgba(0,0,0,0.5);
+        }
+
+        .agenda-day {
+            padding: 6px 8px;
+            border-bottom: 2px solid #222;
+        }
+
+        .agenda-day-header {
+            font-size: 1.15rem;
+            text-transform: uppercase;
+            color: var(--gold);
+            border-bottom: 1px solid #333;
+            padding-bottom: 3px;
+            margin-bottom: 4px;
+        }
+
+        .agenda-slot {
+            display: flex;
+            gap: 5px;
+            font-size: 1.05rem;
+            line-height: 1.2;
+            padding: 2px 0;
+        }
+
+        .slot-time {
+            color: #555;
+            min-width: 26px;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+
+        .slot-event { color: var(--marble); }
+        .slot-event.mandatory { color: var(--warm-amber); }
+        .slot-event.current { color: var(--phosphor-green); }
+        .slot-event.open { color: #444; }
+        .slot-event.tentative { color: var(--ega-cyan); }
+
+        .gossip-sidebar {
+            padding: 6px 8px;
+            border-top: 2px solid var(--gold);
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .gossip-header {
+            font-size: 1.1rem;
+            text-transform: uppercase;
+            color: var(--primary-red);
+            border-bottom: 1px solid #333;
+            padding-bottom: 3px;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .gossip-count {
+            background: var(--primary-red);
+            color: white;
+            padding: 0 5px;
+            font-size: 1rem;
+        }
+
+        .gossip-item {
+            font-size: 1rem;
+            color: var(--marble);
+            line-height: 1.25;
+            padding: 2px 0;
+        }
+        .gossip-item .gossip-src { color: #555; }
+
+        .gossip-more {
+            font-size: 1rem;
+            color: var(--primary-red);
+            cursor: pointer;
+            margin-top: auto;
+            padding-top: 4px;
+        }
+        .gossip-more:hover { color: #ff4444; }
+
+        /* ============================================
+           ACTION BAR — Below Stage
+           ============================================ */
+        .action-bar {
+            width: 1160px;
+            margin-top: 10px;
+            display: flex;
+            gap: 6px;
+        }
+
+        .action-group {
+            display: flex;
+            gap: 6px;
+        }
+        .action-group + .action-group {
+            margin-left: 6px;
+            padding-left: 12px;
+            border-left: 3px solid #333;
+        }
+
+        .action-btn {
+            background: var(--marble);
+            border: 3px solid var(--black);
+            padding: 8px 14px;
+            text-align: center;
+            font-size: 1.3rem;
+            font-family: var(--pixel-font);
+            cursor: pointer;
+            box-shadow: inset 2px 2px 0px #fff, inset -2px -2px 0px #707070;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .action-btn:hover { background: var(--gold); }
+
+        .action-btn.btn-active {
+            background: var(--ega-cyan);
+            color: white;
+            border-color: #000;
+            box-shadow: inset 2px 2px 0px rgba(255,255,255,0.3), inset -2px -2px 0px #006666;
+        }
+
+        .action-btn.btn-end {
+            background: var(--primary-red);
+            color: white;
+            margin-left: auto;
+            box-shadow: inset 2px 2px 0px #cc4444, inset -2px -2px 0px #660000;
+        }
+        .action-btn.btn-end:hover { background: #cc0000; }
+
+        .action-btn.btn-disabled {
+            background: #888;
+            color: #555;
+            cursor: not-allowed;
+            box-shadow: inset 2px 2px 0px #999, inset -2px -2px 0px #666;
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- ========== PERSISTENT HEADER ========== -->
+    <div class="campaign-header">
+        <div class="stat-box">
+            <div class="stat-label">Day / Slot</div>
+            <div class="stat-value">D23 · MORNING</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Your Bill</div>
+            <div class="stat-value">Z.B. 42: CLEAN RIVERS</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">War Chest</div>
+            <div class="stat-value">$2,840</div>
+        </div>
+        <div class="stat-box primary-box">
+            <div class="stat-label">Primary Threat</div>
+            <div class="stat-value danger">38 / 70</div>
+            <div class="primary-bar-track">
+                <div class="primary-bar-fill" style="width: 54%;"></div>
+            </div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Primary In</div>
+            <div class="stat-value danger">T−12 DAYS</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Week</div>
+            <div class="stat-value">5 of 12</div>
+        </div>
+    </div>
+
+    <!-- ========== STAGE + SIDEBAR WRAPPER ========== -->
+    <div class="stage-wrapper">
+
+    <!-- ========== GAME STAGE ========== -->
+    <div class="game-stage">
+        <div class="stage-background"></div>
+
+        <!-- Phase Indicator -->
+        <div class="phase-indicator">
+            <div class="phase-pip completed">1: READ</div>
+            <div class="phase-pip active">2: ASK</div>
+            <div class="phase-pip">3: OFFER</div>
+        </div>
+
+        <!-- Reference Screens (not in-meeting tabs) -->
+        <div class="ref-tabs">
+            <button class="ref-tab">FACTIONS</button>
+            <button class="ref-tab">MEMBERS</button>
+            <button class="ref-tab">PROMISES</button>
+        </div>
+
+        <!-- NPC Portrait with Ornate Frame -->
+        <div class="character-overlay">
+            <div class="portrait-frame">
+                <!-- Corner ornaments -->
+                <div class="frame-corner tl"></div>
+                <div class="frame-corner tr"></div>
+                <div class="frame-corner bl"></div>
+                <div class="frame-corner br"></div>
+                <!-- Mid-edge studs -->
+                <div class="frame-stud top"></div>
+                <div class="frame-stud bottom"></div>
+                <div class="frame-stud left"></div>
+                <div class="frame-stud right"></div>
+                <!-- Groove detail -->
+                <div class="frame-groove"></div>
+                <!-- Portrait -->
+                <div class="pixel-portrait">
+                    <img src="https://i.imgur.com/4Mkzwyn.png" alt="Sen. Ram">
+                </div>
+            </div>
+            <div class="npc-nameplate">
+                SEN. RAM — FERALIST
+                <div class="npc-subtitle">Seniority 4 · Agri. Cmte Chair</div>
+            </div>
+        </div>
+
+        <!-- Interaction Pane -->
+        <div class="interaction-pane">
+
+            <!-- PHASE 1: THE READ (Dossier) -->
+            <div class="dossier-panel">
+                <div class="dossier-header">
+                    <span>INTEL DOSSIER</span>
+                    <span style="color: var(--marble);">▸ 4 PRIOR MEETINGS</span>
+                </div>
+                <div class="dossier-grid">
+                    <div class="dossier-cell">
+                        <span class="dossier-key">Attitude: </span>
+                        <span class="dossier-val neutral">NEUTRAL</span>
+                    </div>
+                    <div class="dossier-cell">
+                        <span class="dossier-key">Committees: </span>
+                        <span class="dossier-val">AGRI. (CHAIR), BUDGET</span>
+                    </div>
+                    <div class="dossier-cell">
+                        <span class="dossier-key">Known Interests: </span>
+                        <span class="dossier-val"><span class="warm">+AGRI</span> · <span class="warm">+FISCAL</span> · <span class="cold">−BANANA</span></span>
+                    </div>
+                    <div class="dossier-cell">
+                        <span class="dossier-key">Report Card: </span>
+                        <span class="dossier-val">PARTY B+ · BANANA C</span>
+                    </div>
+                </div>
+                <div class="promise-strip">
+                    <span class="promise-icon">⚠</span> OWES YOU: Vote on Z.B. 18 (Due Day 25) &nbsp;|&nbsp; YOU OWE: Cosponsor his amendment to Z.B. 31
+                </div>
+            </div>
+
+            <!-- PHASE 2: THE ASK (Bark + Verb Menu) -->
+            <div class="dialogue-panel">
+                <div class="dialogue-header">
+                    SEN. RAM SPEAKS
+                </div>
+                <div class="dialogue-body">
+                    "My vote isn't cheap, freshman. The freshwater portion makes sense, but the banana subsidies in this bill are a non-starter."
+                </div>
+
+                <div class="verb-menu">
+                    <div class="verb-menu-label">▸ Choose your move</div>
+                    <div class="verb-opt">
+                        <span class="verb-tag">VOTE</span>
+                        "I need your vote on Z.B. 42 in committee markup."
+                    </div>
+                    <div class="verb-opt">
+                        <span class="verb-tag">DISCUSS</span>
+                        "What's the mood on Freshwater policy right now?"
+                    </div>
+                    <div class="verb-opt">
+                        <span class="verb-tag">HELP</span>
+                        "I need help getting a hearing scheduled."
+                    </div>
+                    <div class="verb-opt">
+                        <span class="verb-tag">OFFER</span>
+                        "I'll remove the banana subsidies via amendment."
+                    </div>
+                    <div class="verb-opt">
+                        <span class="verb-tag">EXIT</span>
+                        "I appreciate your time, Senator."
+                    </div>
+                </div>
+
+                <!-- INTEL LEDGER -->
+                <div class="intel-ledger">
+                    &gt; CONCERN: Bill's banana provisions conflict with his core interests<br>
+                    &gt; PATTERN: Past meetings suggest he responds to reciprocal favors<br>
+                    <span class="dim">&gt; NOTE: His Budget seat means he'll scrutinize the burden score.</span>
+                </div>
+            </div>
+
+        </div><!-- /interaction-pane -->
+
+    </div><!-- /game-stage -->
+
+    <!-- ========== AGENDA SIDEBAR ========== -->
+    <div class="agenda-sidebar">
+        <div class="agenda-day">
+            <div class="agenda-day-header">▸ TODAY — D23</div>
+            <div class="agenda-slot">
+                <span class="slot-time">MOR</span>
+                <span class="slot-event current">◄ SEN. RAM</span>
+            </div>
+            <div class="agenda-slot">
+                <span class="slot-time">AFT</span>
+                <span class="slot-event mandatory">AGRI. CMTE HEARING</span>
+            </div>
+            <div class="agenda-slot">
+                <span class="slot-time">EVE</span>
+                <span class="slot-event mandatory">CAUCUS MTG</span>
+            </div>
+        </div>
+        <div class="agenda-day">
+            <div class="agenda-day-header">TOMORROW — D24</div>
+            <div class="agenda-slot">
+                <span class="slot-time">MOR</span>
+                <span class="slot-event tentative">REP. PARROT</span>
+            </div>
+            <div class="agenda-slot">
+                <span class="slot-time">AFT</span>
+                <span class="slot-event mandatory">FLOOR VOTE Z.B. 18</span>
+            </div>
+            <div class="agenda-slot">
+                <span class="slot-time">EVE</span>
+                <span class="slot-event open">— OPEN —</span>
+            </div>
+        </div>
+        <div class="gossip-sidebar">
+            <div class="gossip-header">
+                GOSSIP <span class="gossip-count">3</span>
+            </div>
+            <div class="gossip-item">Sen. Owl leaving Speaker's office <span class="gossip-src">(caucus)</span></div>
+            <div class="gossip-item">Z.B. 18 at 24 yes votes <span class="gossip-src">(hallway)</span></div>
+            <div class="gossip-more">▸ VIEW ALL</div>
+        </div>
+    </div><!-- /agenda-sidebar -->
+
+    </div><!-- /stage-wrapper -->
+
+    <!-- ========== ACTION BAR ========== -->
+    <div class="action-bar">
+        <div class="action-group">
+            <div class="action-btn btn-active">📋 WHIP COUNT</div>
+            <div class="action-btn">📜 REVIEW TAGS</div>
+            <div class="action-btn">🗓️ CALENDAR</div>
+        </div>
+        <div class="action-group">
+            <div class="action-btn">🏠 CAMPAIGN</div>
+            <div class="action-btn btn-disabled">💰 FUNDRAISE</div>
+            <div class="action-btn">📨 SCHEDULE MTG</div>
+        </div>
+        <div class="action-btn btn-end">END MORNING SLOT ▸</div>
+    </div>
+
+</body>
+</html>
